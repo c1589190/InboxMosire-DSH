@@ -1,0 +1,2 @@
+# Keep LF on every platform: this is a Node ESM package and a YAML patch.
+* text=auto eol=lf

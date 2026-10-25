@@ -1,0 +1,40 @@
+{
+  "name": "@mosire/dsh-inbox-mosire",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "InboxMosire wake adapter for DeepSeek Harness: subscribes to an InboxMosire inbox over SSE and wakes the bound DSH session with a fixed host event.",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "docs"
+  ],
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.0-rc.2"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "icon": "./icon.svg",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:live": "node --test test/real-backend.test.mjs",
+    "acceptance:acp": "node scripts/acceptance-acp.mjs"
+  },
+  "license": "MIT"
+}

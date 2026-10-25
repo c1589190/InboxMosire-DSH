@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "InboxMosire 唤醒适配器",
+    "description": "订阅 InboxMosire 通知板事件，在会话空闲或回合结束时用固定模板唤醒当前 DSH 会话；持久化 cursor、revision 水印与会话绑定。"
+  }
+}

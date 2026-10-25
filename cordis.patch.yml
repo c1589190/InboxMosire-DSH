@@ -1,0 +1,9 @@
+# InboxMosire wake adapter for DeepSeek Harness.
+#
+# The row is inert until an inbox binding exists: either `config.sessionId`
+# names a Session (or `"auto"`), or a human runs `/inbox bind` in the target
+# session. Runtime configuration is documented in README.md; the token is read
+# from a local secret file and is never part of this row.
+- insert:
+    - id: inbox-mosire-adapter
+      name: '@mosire/dsh-inbox-mosire'

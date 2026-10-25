@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "InboxMosire Wake Adapter",
+    "description": "Subscribes to an InboxMosire inbox and wakes the bound session with a fixed host event: status, SSE cursor, revision watermarks, and lifecycle binding."
+  }
+}
