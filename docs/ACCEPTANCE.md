@@ -116,7 +116,7 @@ that run is not part of the repository.
 | 5 | S1 archive/dispose stops app-a only | **pass** | ACP run + manager test; occupancy cleared only for S1 |
 | 6 | Same revision not re-woken | **pass** | engine + manager + real tests |
 | 7 | Each binding reconnects with its own `Last-Event-ID` | **pass** | engine reconnect test; manager restart test preserves per-binding cursors |
-| 8 | Daemon/DSH restart restores each binding | **pass** | manager restart test; real-backend restart step |
+| 8 | Daemon/DSH restart restores each binding | **pass** | manager restart test; real-backend restart step; live Web restart migrated the v1 state to v2 without loss |
 | 9 | Unreadable/non-absolute tokenRef fails closed | **pass** | manager + tools + real tests (`TOKEN_REF_NOT_ABSOLUTE`, `TOKEN_REF_UNREADABLE`) |
 | 10 | No raw token in logs/state/wake/transcript | **pass** | privacy scan; wake-message assertions |
 | 11 | Mode A: target session claims/completes via program MCP; adapter never does | **partial** | The adapter never calls claim/complete/list/push (asserted by code and tests). No program-owned MCP server is running on this machine, so claim/complete was exercised through the program's own HTTP client surface with the program tokens — the same calls `InboxClientMcpTools` wraps — not through the MCP transport. |
@@ -124,11 +124,49 @@ that run is not part of the repository.
 | 13 | Occupancy does not block another valid token | **pass** | backend contract; adapter treats a missing `inbox:occupy` as advisory |
 | 14 | v1 single-binding data migrates or reports incompatibility, never silently | **pass** | `normalizeHostState` keeps `legacyV1`, migrates a usable binding, marks a tokenRef-less binding `blocked`; unit tests |
 
+## 6. Post-restart web-profile self-loop (2026-10-25 21:27–21:28)
+
+After the DSH Web host was restarted, the live profile loaded the v2 engine and
+migrated the state in place:
+
+```console
+13:27:08.459 warn v1 单 binding 状态已迁移到 v2
+13:27:08.459 info 状态已迁移到 v2 {"existed":true,"bindings":0}
+13:27:08.459 info v1 状态快照已保留在 legacyV1（未丢弃）
+```
+
+Then the current session bound itself through the model tool, pushed one item,
+was woken once, processed it, and unbound itself:
+
+```console
+inbox_adapter_bind({inboxId:"app-a", adapterTokenRef:"file:…"})
+→ 已绑定 session-5d2eb5b6-… → app-a
+  sse=connected occupancy=occupied by session-5d2eb5b6-…
+
+push (program-a token) → itm_44d40d5e-…, revision=34, available=1
+# the turn stayed active; no wake was delivered before it ended
+13:28:30.907 已投递唤醒 {session:session-5d2eb5b6-…, inbox:app-a, revision:34,
+                        available:1, channels:[ticket], reason:turn-end-event}
+
+list → 1 item (v2 自测：bind → push → wake → 处理 → unbind)
+claim → 1 (payload {"demo":true,"from":"self"} appears only here)
+complete → 1, revision=36, available=0
+
+inbox_adapter_unbind → 已解绑 session-5d2eb5b6-…（app-a）
+13:28:37.020 停止 binding {reason:"unbind"}
+13:28:37.020 停止 InboxMosire 连接 {reason:"stopped"}
+state: version=2, bindings=[], legacyV1=true
+app-a: available=0 claimed=0 occupied=false (socket FIN-WAIT)
+```
+
+This is the v2 loop in the production Web profile: binding, SSE, one wake at
+turn end, processing through the program-token client surface, and unbind with
+occupancy cleanup.
+
 ## Notes and limits
 
-- The **web profile** still runs the v1 module generation in its live process
-  from before this upgrade. The linked package, patch, and state migrate to v2
-  on the next DSH restart; no unbound session is woken meanwhile.
+- The **web profile** was restarted and now runs v2 (the state above). The
+  linked package, patch, and v2 state stay in place across restarts.
 - The central InboxMosire MCP connection (`custom-inbox-mosire`) was
   **disconnected** to honor Mode A: target sessions must use their program-owned
   MCP server, not the central one.
