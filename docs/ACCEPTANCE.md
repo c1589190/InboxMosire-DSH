@@ -99,7 +99,7 @@ Raw evidence: `/tmp/inbox-mosire-acp/acceptance.txt`,
 ```console
 $ node scripts/privacy-scan.mjs
 privacy scan: PASS
-  repo files scanned: 30
+  repo files scanned: 34
   adapter state/config/log files: 3
   DSH host log files: 5
   DSH session logs: 875 (3 inbox-mosire wake messages)
@@ -107,10 +107,12 @@ privacy scan: PASS
 ```
 
 The scan reads every secret file and searches the repository, the adapter's
-state/config/log, the DSH host logs, and **every committed `inbox-mosire` wake
-message** in every session log on this machine. It also checks synthetic
-notification markers (`SECRET-TITLE`, `SECRET-BODY`, `acp-active-*`) in runtime
-artifacts.
+state/config/log, the DSH host logs, and the **complete decompressed content of
+every session log on this machine** (875) for credential values. It additionally
+checks every committed `inbox-mosire` wake message and every runtime artifact
+for synthetic notification markers (`SECRET-TITLE`, `SECRET-BODY`,
+`acp-active-*`). A full-transcript credential scan is stricter than required:
+0 hits.
 
 ### 5. Web profile installation
 

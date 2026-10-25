@@ -223,6 +223,10 @@ dedupe, active-turn deferral, debounce, claim/complete loop, archive/resume,
 no-progress backoff, restart recovery, auto-binding, `/inbox` through the plugin
 entry, and privacy scans of wake text/state/log.
 
+`scripts/privacy-scan.mjs` additionally scans every local credential file
+against the repository, the adapter artifacts, the DSH host logs, the complete
+content of every session log on the machine, and every adapter wake message.
+
 `docs/ACCEPTANCE.md` records the live run against `smoke` and the real DSH host.
 
 ## Limits

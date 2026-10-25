@@ -137,8 +137,13 @@ for (const slug of await readdir(join(DSH_HOME, 'sessions')).catch(() => [])) {
   for (const sessionId of await readdir(slugRoot).catch(() => [])) {
     const file = join(slugRoot, sessionId, 'session.v4.jsonl.zstd')
     if (!existsSync(file)) continue
+    const text = decompressFrames(await readFile(file))
+    // Credentials must not appear anywhere in a transcript; content markers are
+    // checked on wake messages only, because tool results legitimately carry
+    // notification titles and payloads to the Agent.
+    scanText(text, secrets, 'session', file, false)
     const events = []
-    for (const line of decompressFrames(await readFile(file)).split('\n')) {
+    for (const line of text.split('\n')) {
       if (!line.trim()) continue
       try {
         events.push(JSON.parse(line))

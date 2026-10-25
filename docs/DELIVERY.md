@@ -98,7 +98,7 @@ without a cursor starts at the tip).
 | `node --test` | **59/59 pass**, exit 0 |
 | `node --test test/real-backend.test.mjs` | **2/2 pass** against the live daemon on `smoke` (empty board, one wake, claim/complete, dedupe, offline push + restart replay, claim 2 / complete 1 / remaining wake, bad token) |
 | `node scripts/acceptance-acp.mjs` | **all assertions passed** on a real DSH host: 2 pushes during an 8 s active turn, one wake 508 ms after turn end (seq 29 > turn/end seq 24), Agent called `inbox_list` → `inbox_claim` → `inbox_complete`, board drained in 4.3 s, exactly one `inbox-mosire` wake message in the durable log, archived session push produced no wake |
-| `node scripts/privacy-scan.mjs` | **PASS** across 30 repo files, adapter state/config/log, DSH host logs, and 875 session logs (3 wake messages) |
+| `node scripts/privacy-scan.mjs` | **PASS** across 34 repo files, adapter state/config/log, DSH host logs, and the full decompressed content of 875 session logs (0 credential hits) plus 3 wake messages |
 | `plugin_manager install_bundle /home/cna/InboxMosire-DSH` | `application: applied`, `warnings: []`; live adapter log: `空闲：等待绑定 DSH session` |
 
 Full logs and exact output: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-acp/`
@@ -128,13 +128,16 @@ session log under `~/.dsh/sessions/--tmp-inbox-mosire-acp-workspace--/`, and
 
 `node scripts/privacy-scan.mjs` reads all five local credential files and scans:
 
-- every repository file (30),
+- every repository file (34),
 - the adapter state, config, and log (3),
 - the Web profile host logs (5),
-- every session log on this machine (875), extracting **only** adapter wake
-  messages (3) for content checks.
+- the **complete decompressed content** of every session log on this machine
+  (875) for credential values,
+- every adapter wake message (3) for credential *and* notification-content
+  markers.
 
-**Result: PASS.** No credential value and no synthetic title/payload marker was
-found in any scanned artifact. The token is loaded at start, used only in the
+**Result: PASS.** No credential value appears anywhere in the scanned
+transcripts or artifacts, and no synthetic title/payload marker appears in an
+adapter artifact or wake message. The token is loaded at start, used only in the
 `Authorization` header, redacted from every log line, and never written to
 state, the wake message, a URL, or an error string.
