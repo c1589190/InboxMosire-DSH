@@ -98,7 +98,24 @@ per-session DSH storage domain.**
 - The state file is explicitly versioned (`version: 1`) with a migration path
   and a refusal path for unknown/newer versions and foreign inboxes.
 
-## 7. Credentials for the token
+## 7. Model-facing tool registration
+
+**Yes.** A Host plugin registers tools with the same API the built-in tools use:
+
+- `tools.register(definition: ToolDefinition): () => void`
+  (`@deepseek-ai/dsh-tools…/lib/types/index.d.ts:96`), where
+  `ToolDefinition extends ToolSchema` and adds
+  `output: { schema, render(args, value) }` and
+  `execute(args, exec): Promise<unknown>` (`:115-128`).
+- `ToolExecutionInput.agent?: Agent` (`:229`) identifies the calling session, so
+  a binding tool can be authoritative; `exec.signal` carries cancellation.
+- Precedent: `@deepseek-ai/dsh-mcp-client…/lib/index.js:179-195` builds plain
+  `{ name, description, parameters: inputSchema, output, execute }` definitions
+  — exactly the shape this bundle's `tools.js` uses, with no DSH import needed.
+- The adapter exposes only `inbox_adapter_status|bind|unbind`; the board tools
+  stay on the MCP surface (`mcp__inbox-mosire__*`) as the handoff requires.
+
+## 8. Credentials for the token
 
 The adapter deliberately does **not** use `ctx.credentials`: the contract
 requires a local secret file read at runtime (`INBOX_API_TOKEN_FILE`). The token

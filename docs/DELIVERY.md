@@ -16,11 +16,12 @@ the adapter never calls MCP.
 | `lib/state.js` | Atomic, versioned state. `emptyState()` (`:24`), `normalizeState()` migration/refusal (`:82`), `StateStore` (`:141`). |
 | `lib/template.js` | Fixed wake template (`:59`), idempotency key (`:87`), message id (`:99`), immutable `UserMessage` (`:117`), channel sanitization (`:38`). |
 | `lib/config.js` | Precedence and validation (`:156`), token loading (`:329`), redaction (`:360`). |
-| `lib/commands.js` | `/inbox status\|bind\|unbind\|pause\|resume\|retry` (`:29`, `:81`). |
+| `lib/commands.js` | `/inbox status\|bind\|unbind\|pause\|resume\|retry` (`:29`, `:81`); status now reports the caller and `isBound`. |
+| `tools.js` | Model-facing `inbox_adapter_status`, `inbox_adapter_bind`, `inbox_adapter_unbind`; a separate loader row that delegates to the `/inbox` command. |
 | `lib/log.js` | Redacting JSONL logger with rotation and an in-memory tail (`:27`). |
 | `cordis.patch.yml` | Bundle patch that inserts the `inbox-mosire-adapter` row. |
 | `package.json` / `locale/*.json` / `icon.svg` | Bundle manifest, display metadata, artwork. |
-| `test/…` | 59 tests: unit, fake host + fake server, live backend, manifest. |
+| `test/…` | 66 tests: unit, fake host + fake server, live backend, tool surface, manifest. |
 | `test/helpers/mcp.mjs`, `scripts/acceptance-acp.mjs` | Acceptance harness (Agent stand-in and real ACP host driver). |
 | `scripts/privacy-scan.mjs` | Credential/content leak scan. |
 | `docs/HOST-CAPABILITIES.md`, `docs/ACCEPTANCE.md` | Host probe and acceptance evidence. |
@@ -95,11 +96,13 @@ without a cursor starts at the tip).
 
 | Command | Result |
 |---|---|
-| `node --test` | **59/59 pass**, exit 0 |
+| `node --test` | **66/66 pass**, exit 0 |
 | `node --test test/real-backend.test.mjs` | **2/2 pass** against the live daemon on `smoke` (empty board, one wake, claim/complete, dedupe, offline push + restart replay, claim 2 / complete 1 / remaining wake, bad token) |
 | `node scripts/acceptance-acp.mjs` | **all assertions passed** on a real DSH host: 2 pushes during an 8 s active turn, one wake 508 ms after turn end (seq 29 > turn/end seq 24), Agent called `inbox_list` → `inbox_claim` → `inbox_complete`, board drained in 4.3 s, exactly one `inbox-mosire` wake message in the durable log, archived session push produced no wake |
 | `node scripts/privacy-scan.mjs` | **PASS** across 34 repo files, adapter state/config/log, DSH host logs, and the full decompressed content of 875 session logs (0 credential hits) plus 3 wake messages |
-| `plugin_manager install_bundle /home/cna/InboxMosire-DSH` | `application: applied`, `warnings: []`; live adapter log: `空闲：等待绑定 DSH session` |
+| `plugin_manager install_bundle /home/cna/InboxMosire-DSH` | `application: applied`, `warnings: []`; after the tool-row reinstall the live adapter restored `绑定已加载 {cursor:118}` and `SSE 已连接 {cursor:118}` |
+| live tool calls | `inbox_adapter_status` → `isBound=true`; `inbox_adapter_bind` → 已绑定; `mcp__inbox-mosire__inbox_list` → `{count:0}` |
+| `mcp_connector_configure` | `inbox-mosire` → `http://127.0.0.1:18766/mcp`, connected; 7 `inbox_*` tools cached and injected (`mcp__inbox-mosire__*`) |
 
 Full logs and exact output: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-acp/`
 (`acceptance.txt`, `adapter.log`, `state.json`, `dsh.stderr.log`), the durable
@@ -114,10 +117,13 @@ session log under `~/.dsh/sessions/--tmp-inbox-mosire-acp-workspace--/`, and
 - The `/inbox` command's visual appearance in the Web composer was not verified
   with browser control. Its registration and behavior are covered by the plugin
   entry test and the live profile load.
-- The **Web profile** has the adapter installed and running, but no session was
-  bound there (the adapter is inert until `/inbox bind`). Binding the operator's
-  live session and registering the InboxMosire MCP server are DSH-side operator
-  actions, intentionally not performed automatically.
+- The **Web profile** is now fully wired: the engine is bound to the live
+  session `session-5d2eb5b6-…` with an open SSE connection, the native
+  `inbox_adapter_*` tools are registered, and the InboxMosire MCP server is
+  configured so `inbox_list`/`inbox_claim`/`inbox_complete` are available as
+  `mcp__inbox-mosire__*`.
+- Exposing `inbox_adapter_bind`/`unbind` to the model was an explicit operator
+  choice; the same actions remain available to a human through `/inbox`.
 - The real-host run used the `inbox-acp` test profile (shipped ACP template plus
   `test/acp-test.patch.yml`) rather than the Web UI, because ACP provides a
   scriptable, standard control surface and a real Agent/Session/turn lifecycle.

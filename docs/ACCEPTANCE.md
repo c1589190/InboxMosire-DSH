@@ -25,10 +25,10 @@ InboxMosire side stays real).
 ```console
 $ node --test
 …
-1..59
-# tests 59
+1..66
+# tests 66
 # suites 0
-# pass 59
+# pass 66
 # fail 0
 ```
 
@@ -114,7 +114,36 @@ for synthetic notification markers (`SECRET-TITLE`, `SECRET-BODY`,
 `acp-active-*`). A full-transcript credential scan is stricter than required:
 0 hits.
 
-### 5. Web profile installation
+### 5. Live tool surface (web profile)
+
+After registering the InboxMosire MCP server in DSH and reinstalling the bundle
+(remove → install, so the new `tools.js` row loads), the calling session has
+both tool families. The calls below were executed live in this session:
+
+```console
+# native adapter tool → /inbox command → live adapter
+inbox_adapter_status()
+→ InboxMosire adapter — 启用
+  inbox=main server=http://127.0.0.1:18765
+  session=session-5d2eb5b6-… agent=running
+  board: revision=3 available=0 claimed=0
+  cursor: lastEventId=118 lastObservedRevision=3 lastWokenRevision=1
+  sse: connected since 2026-10-25T11:43:54.250Z reconnects=0
+  lastWake: revision=1 available=1 at=2026-10-25T11:36:59.915Z channels=[ticket]
+  caller=session-5d2eb5b6-… isBound=true
+
+inbox_adapter_bind()
+→ 已绑定 session-5d2eb5b6-…
+
+mcp__inbox-mosire__inbox_list()
+→ {"count":0,"items":[],"inbox":"main"}
+```
+
+The remove → install cycle also proves restart recovery in the live profile:
+the engine logged `绑定已加载 {session, cursor:118, lastWokenRevision:1}` and
+`SSE 已连接 {cursor:118}` from the persisted state, with no duplicate wake.
+
+### 6. Web profile installation
 
 ```console
 plugin_manager install_bundle /home/cna/InboxMosire-DSH
@@ -144,7 +173,7 @@ adapter.
 | # | Requirement | Result | Evidence |
 |---|---|---|---|
 | 1 | An empty `main` board never wakes | **pass** | `adapter.test.mjs` “an empty board never wakes the session”; real-backend step 1 on `smoke`; the live `main` adapter is unbound and silent |
-| 2 | One push on an idle session wakes exactly once | **pass** | real-backend step 2 (byte-exact template); ACP wake `revision=60` |
+| 2 | One push on an idle session wakes exactly once | **pass** | real-backend step 2 (byte-exact template); ACP wake `revision=60`; live web-session wake `revision=1` |
 | 3 | Pushes during an active turn do not interrupt it; turn end wakes at most once | **pass** | `adapter.test.mjs` active-turn test; ACP: two pushes during an 8 s `sleep`, wake `seq=29 > turn/end seq=24`, one wake |
 | 4 | Claim 2 / complete 1, then remaining work is processed | **pass** | real-backend step 6 (3 available, claim 2, complete 1, one wake for the remaining item); ACP claim+complete loop drains the board |
 | 5 | The same revision is never woken twice | **pass** | `adapter.test.mjs` dedupe test; real-backend step 4 |
@@ -152,7 +181,7 @@ adapter.
 | 7 | An archived session receives no wake | **pass** | `adapter.test.mjs` dispose/resume; ACP real `session/close` followed by a push: delivery stopped, no wake, the item stayed on the board |
 | 8 | Cursor / `lastWokenRevision` / binding survive a DSH restart | **pass** | `adapter.test.mjs` restart tests (including interrupted `pendingWake` at-most-once); real-backend restart test |
 | 9 | No payload/title/token in adapter logs or wake messages | **pass** | `node scripts/privacy-scan.mjs`; privacy tests in `adapter.test.mjs` and `real-backend.test.mjs`; ACP assertions |
-| 10 | Full loop: idle → wake → multi-claim → complete → continue/silence | **pass** | ACP transcript above: wake → `inbox_list` → `inbox_claim` → `inbox_complete` → board empty → silent |
+| 10 | Full loop: idle → wake → multi-claim → complete → continue/silence | **pass** | ACP transcript: wake → `inbox_list` → `inbox_claim` → `inbox_complete` → board empty → silent; plus the live Web session loop on `main` (wake at 11:36:59, claim/complete at 11:37:13) |
 
 ## Notes and limits
 

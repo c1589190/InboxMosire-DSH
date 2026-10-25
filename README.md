@@ -50,12 +50,15 @@ dsh plugin --profile web add /home/cna/InboxMosire-DSH
 ```
 
 or, inside a Harness session, `plugin_manager` → `install_bundle` with the
-absolute package directory. The bundle patch inserts one row:
+absolute package directory. The bundle patch inserts two rows — the long-lived wake engine and the
+model-facing tool surface:
 
 ```yaml
 - insert:
     - id: inbox-mosire-adapter
-      name: '@mosire/dsh-inbox-mosire'
+      name: '@mosire/dsh-inbox-mosire'          # SSE + binding + followup
+    - id: inbox-mosire-tools
+      name: '@mosire/dsh-inbox-mosire/tools'    # inbox_adapter_* tools
 ```
 
 The row is **inert until an inbox binding exists**. There are two ways to bind:
@@ -119,6 +122,27 @@ permission):
 /inbox pause|resume    disable/enable wakes, keeping binding and cursor
 /inbox retry           clear a 401/403/not-found configuration error and reconnect
 ```
+
+## Model-facing tools
+
+The `tools.js` row exposes three tools that delegate to the same `/inbox`
+command handler (and therefore to the one live adapter instance):
+
+| Tool | Effect |
+|---|---|
+| `inbox_adapter_status` | read-only: bound session, `isBound` for the caller, SSE state, cursor, revision, last wake, config error |
+| `inbox_adapter_bind` | bind the calling session (or an explicit `sessionId`) as the wake target |
+| `inbox_adapter_unbind` | remove the binding, keep cursor and watermarks |
+
+Business operations are **not** re-implemented here. Register the InboxMosire MCP
+server (`http://127.0.0.1:18766/mcp`) with DSH and the Agent gets
+`inbox_list`, `inbox_claim`, `inbox_complete`, `inbox_status`, `inbox_renew`,
+`inbox_release`, and `inbox_push` in the MCP namespace
+(`mcp__inbox-mosire__inbox_list`, …). That is the intended split: the adapter
+owns wakes; the MCP server owns the board.
+
+Binding is exposed to the model only because the operator asked for it. A human
+can always use `/inbox bind`, `/inbox unbind`, or `/inbox pause` instead.
 
 ## State
 
@@ -235,11 +259,13 @@ content of every session log on the machine, and every adapter wake message.
   it is woken once it is resumed (`agent/created`). This is deliberate: the
   adapter never resurrects a session, and an archived session therefore cannot
   be woken.
-- One adapter instance serves one inbox and one binding. Several sessions that
+- One adapter instance serves one inbox and one binding; two sessions calling
+  `inbox_adapter_bind` will overwrite each other (last wins). Several sessions that
   must react to the same inbox need one adapter row each (different `id`,
   `stateFile`, and binding).
 - Wake delivery is at-most-once per revision by design (see above); a crash in
   the microsecond window between persistence and `followup()` can lose one
   wake rather than duplicate it.
 - The adapter is read-only against InboxMosire: no push, no claim, no complete,
-  no MCP client.
+  and it holds no MCP client. `inbox_push` is an MCP tool, not an adapter
+  capability.

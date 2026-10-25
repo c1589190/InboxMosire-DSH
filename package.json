@@ -8,10 +8,12 @@
     ".": "./index.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./tools": "./tools.js"
   },
   "files": [
     "index.js",
+    "tools.js",
     "lib",
     "cordis.patch.yml",
     "locale/*.json",

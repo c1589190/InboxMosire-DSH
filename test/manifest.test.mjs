@@ -22,6 +22,7 @@ test('the package is a DSH bundle with a display name, locale, and icon', async 
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.match(manifest.dsh.engines.dsh, />=0\.2\.0-rc\.2/)
   assert.equal(manifest.exports['.'], './index.js')
+  assert.equal(manifest.exports['./tools'], './tools.js')
   assert.equal(manifest.exports['./locale/*.json'], './locale/*.json')
   assert.equal(manifest.exports['./icon'], './icon.svg')
   assert.equal(manifest.icon, './icon.svg')
@@ -39,11 +40,13 @@ test('the package is a DSH bundle with a display name, locale, and icon', async 
   assert.ok((await stat(join(ROOT, 'icon.svg'))).size < 256 * 1024)
 })
 
-test('the bundle patch inserts exactly the adapter row', async () => {
+test('the bundle patch inserts the engine row and the tool row', async () => {
   const patch = await readFile(join(ROOT, 'cordis.patch.yml'), 'utf8')
   assert.match(patch, /- insert:/)
   assert.match(patch, /id: inbox-mosire-adapter/)
-  assert.match(patch, /name: '@mosire\/dsh-inbox-mosire'/)
+  assert.match(patch, /name: '@mosire\/dsh-inbox-mosire'\n/)
+  assert.match(patch, /id: inbox-mosire-tools/)
+  assert.match(patch, /name: '@mosire\/dsh-inbox-mosire\/tools'/)
   assert.ok(!patch.includes('Bearer'), 'the row must not carry a credential')
   assert.ok(!/^\s*token(File)?\s*:/m.test(patch), 'the row must not configure a token')
 })
@@ -53,6 +56,9 @@ test('the plugin entry exports the Host plugin surface', async () => {
   assert.equal(typeof entry.apply, 'function')
   assert.equal(entry.name, 'inbox-mosire-adapter')
   assert.deepEqual(entry.inject, ['agents'])
+  const tools = await import(join(ROOT, 'tools.js'))
+  assert.equal(typeof tools.apply, 'function')
+  assert.deepEqual(tools.inject, ['commands', 'tools'])
   assert.equal(entry.Config, undefined, 'runtime validation replaces a loader schema')
 })
 
@@ -63,7 +69,7 @@ test('every advertised file exists', async () => {
     const info = await stat(join(ROOT, entry))
     assert.ok(info.isFile() || info.isDirectory(), entry)
   }
-  for (const file of ['README.md', 'docs/HOST-CAPABILITIES.md', 'lib/adapter.js', 'lib/config.js', 'lib/state.js', 'lib/inbox-client.js', 'lib/template.js', 'lib/commands.js', 'lib/log.js']) {
+  for (const file of ['README.md', 'docs/HOST-CAPABILITIES.md', 'tools.js', 'lib/adapter.js', 'lib/config.js', 'lib/state.js', 'lib/inbox-client.js', 'lib/template.js', 'lib/commands.js', 'lib/log.js']) {
     await stat(join(ROOT, file))
   }
 })

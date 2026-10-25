@@ -24,6 +24,7 @@ export function createFakeHost({ now } = {}) {
   const logs = []
   const commands = []
   const followups = []
+  const toolDefinitions = []
   const disposers = []
 
   /**
@@ -63,6 +64,17 @@ export function createFakeHost({ now } = {}) {
           if (index >= 0) commands.splice(index, 1)
         }
       },
+      find: (_agent, name) => commands.find((definition) => definition.name === name),
+    },
+    tools: {
+      register: (definition) => {
+        toolDefinitions.push(definition)
+        return () => {
+          const index = toolDefinitions.indexOf(definition)
+          if (index >= 0) toolDefinitions.splice(index, 1)
+        }
+      },
+      schemas: () => toolDefinitions.map(({ name: toolName, description, parameters }) => ({ name: toolName, description, parameters })),
     },
   }
 
@@ -96,6 +108,7 @@ export function createFakeHost({ now } = {}) {
     },
     agents: services.agents,
     commands: services.commands,
+    tools: services.tools,
   }
 
   /**
@@ -154,6 +167,7 @@ export function createFakeHost({ now } = {}) {
     ctx,
     agents,
     commands,
+    tools: toolDefinitions,
     followups,
     logs,
     disposers,
