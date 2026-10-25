@@ -202,9 +202,15 @@ test('real backend: empty board, one wake, claim/complete loop, dedupe, restart'
     restartedHost.followups[1].message.content[0].text,
     new RegExp(`available=${before.available - 2}`),
   )
+  // Finish the in-progress claim and drain whatever is left, so the smoke
+  // board is returned to available=0/claimed=0 rather than leaving an orphan
+  // lease behind for the next run.
+  await mcp.completeAll(INBOX, partial.slice(1))
   const rest = await mcp.claimAll(INBOX)
   await mcp.completeAll(INBOX, rest)
-  assert.equal((await boardStatus()).available, 0)
+  const cleaned = await boardStatus()
+  assert.equal(cleaned.available, 0)
+  assert.equal(cleaned.claimed, 0, 'the smoke board is left clean')
 
   // 7. Privacy: no title, payload, or token in wake text, state, or log.
   await second2.adapter.whenSettled()

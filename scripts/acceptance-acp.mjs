@@ -278,8 +278,11 @@ async function main() {
   await mcp.init()
   await mcp.drain(INBOX)
   const baseline = await boardStatus()
-  note(`board baseline: revision=${baseline.revision} available=${baseline.available}`)
+  note(`board baseline: revision=${baseline.revision} available=${baseline.available} claimed=${baseline.claimed}`)
   if (baseline.available !== 0) throw new Error('smoke board is not empty before the run')
+  if (baseline.claimed > 0) {
+    note(`warning: ${baseline.claimed} claim lease(s) from an earlier run are still open; they expire on their own`)
+  }
 
   const stderr = await open(join(WORK, 'dsh.stderr.log'), 'w')
   const child = spawn('dsh', ['--profile', PROFILE, '--patch', PATCH], {
