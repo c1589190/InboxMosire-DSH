@@ -30,6 +30,9 @@ export async function startFakeInbox({
   const clients = new Set()
   const requests = []
   const connections = []
+  const occupancyCalls = []
+  let occupant = null
+  let occupiedAt = null
   let seq = 0
   let authMode = 'ok'
   let invalidCursor = false
@@ -74,6 +77,9 @@ export async function startFakeInbox({
       claimed,
       channels,
       updatedAt: new Date().toISOString(),
+      occupied: occupant !== null,
+      occupiedBy: occupant,
+      occupiedAt,
     }
   }
 
@@ -200,7 +206,33 @@ export async function startFakeInbox({
     clients.clear()
   }
 
-  const server = createServer((req, res) => {
+  /**
+   * Read and parse one JSON request body.
+   * @param {import('node:http').IncomingMessage} req - request.
+   * @returns {Promise<Record<string, any>>} parsed body.
+   */
+  async function readJsonBody(req) {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const text = Buffer.concat(chunks).toString('utf8')
+    return text ? JSON.parse(text) : {}
+  }
+
+  /**
+   * Current occupancy document.
+   * @returns {Record<string, any>} occupancy.
+   */
+  function occupancyDocument() {
+    return {
+      inboxId: inbox,
+      occupied: occupant !== null,
+      occupiedBy: occupant,
+      occupiedAt,
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://fake')
     requests.push({ method: req.method, path: url.pathname, search: url.search })
     const auth = req.headers.authorization ?? ''
@@ -216,10 +248,45 @@ export async function startFakeInbox({
       return
     }
 
-    const match = url.pathname.match(/^\/v1\/inboxes\/([^/]+)\/(status|events)$/)
+    const match = url.pathname.match(/^\/v1\/inboxes\/([^/]+)\/(status|events|occupancy)$/)
     if (!match || decodeURIComponent(match[1]) !== inbox) {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'inbox not found' } }))
+      return
+    }
+
+    if (match[2] === 'occupancy') {
+      if (req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(occupancyDocument()))
+        return
+      }
+      if (req.method === 'PUT') {
+        const body = await readJsonBody(req).catch(() => null)
+        if (!body || typeof body.occupiedBy !== 'string' || body.occupiedBy === '') {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: { code: 'INVALID_ARGUMENT', message: 'occupiedBy required' } }))
+          return
+        }
+        occupancyCalls.push({ method: 'PUT', occupiedBy: body.occupiedBy })
+        if (occupant === null) {
+          occupant = body.occupiedBy
+          occupiedAt = new Date().toISOString()
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(occupancyDocument()))
+        return
+      }
+      if (req.method === 'DELETE') {
+        occupancyCalls.push({ method: 'DELETE' })
+        occupant = null
+        occupiedAt = null
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(occupancyDocument()))
+        return
+      }
+      res.writeHead(405, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: { code: 'METHOD_NOT_ALLOWED', message: 'occupancy' } }))
       return
     }
 
@@ -283,6 +350,7 @@ export async function startFakeInbox({
     history,
     requests,
     connections,
+    occupancyCalls,
     push,
     claim,
     complete,
@@ -315,11 +383,16 @@ export async function startFakeInbox({
     get connectionCount() {
       return clients.size
     },
+    /** Current advisory occupant. */
+    get occupant() {
+      return occupant
+    },
     /** Stop the server. */
     async close() {
       if (closed) return
       closed = true
       disconnectAll()
+      server.closeAllConnections?.()
       await new Promise((resolve) => server.close(resolve))
     },
   }

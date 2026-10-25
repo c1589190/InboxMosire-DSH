@@ -1,6 +1,9 @@
 # Acceptance overlay: boot the shipped ACP profile with the DeepSeek account
-# route the web profile uses, plus the InboxMosire wake adapter bound to the
-# smoke inbox. The adapter path is absolute so this profile needs no install.
+# route the web profile uses, plus the v2 multi-binding adapter engine and its
+# tool row. Absolute module paths keep the profile dependency-free.
+#
+# No session is pre-bound: the ACP controller asks each session to call
+# inbox_adapter_bind with its own BindingDescriptor (Mode A).
 - id: agent-default-model
   name: '@deepseek-ai/dsh-agent-default-model'
   config:
@@ -16,12 +19,9 @@
       name: '/home/cna/InboxMosire-DSH/index.js'
       config:
         apiUrl: http://127.0.0.1:18765
-        inboxId: smoke
-        tokenFile: /home/cna/InboxMosire/.work/live/secrets/dsh-smoke-adapter.token
-        channels:
-          - ticket
         debounceMs: 300
         heartbeatTimeoutSeconds: 45
-        sessionId: auto
-        stateFile: /tmp/inbox-mosire-acp/state.json
+        stateFile: /tmp/inbox-mosire-acp/state-v2.json
         logFile: /tmp/inbox-mosire-acp/adapter.log
+    - id: inbox-mosire-tools
+      name: '/home/cna/InboxMosire-DSH/tools.js'

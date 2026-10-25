@@ -1,15 +1,14 @@
 /**
- * Model-facing tools for the InboxMosire wake adapter.
+ * Model-facing tools for the v2 multi-binding adapter.
  *
- * This module is a separate loader row from the wake engine (`index.js`) on
- * purpose: the engine holds a long-lived SSE connection and the durable
- * binding, while the tool surface can be installed or reloaded independently.
- * Every tool delegates to the same `/inbox` command handler, which closes over
- * the one live adapter instance — there is no second source of truth.
+ * Separate loader row from the wake engine (`index.js`): the engine holds the
+ * live bindings and SSE streams, while this module only needs the published
+ * manager from `lib/runtime.js`. Every tool reports the caller's binding plus a
+ * summary of the other bindings; no tool ever returns a raw token.
  *
- * Authority: `bind` / `unbind` are exposed to the model by explicit operator
- * choice. `inbox_list` / `inbox_claim` / `inbox_complete` are NOT here; they
- * belong to the InboxMosire MCP server and stay in the MCP tool namespace.
+ * Business operations (`inbox_list`, `inbox_claim`, `inbox_complete`, …) are
+ * NOT here. Under Mode A the target session uses its program-owned MCP server;
+ * the adapter only wakes.
  *
  * @module @mosire/dsh-inbox-mosire/tools
  */
@@ -17,15 +16,15 @@
 /** Plugin id used by loader diagnostics. */
 export const name = 'inbox-mosire-tools'
 
-/** Both the human-command registry and the tool registry must exist. */
-export const inject = ['commands', 'tools']
+/** Only the tool registry is required; the manager arrives through runtime. */
+export const inject = ['tools']
 
 /** Canonical tool output: one text block carrying the command result. */
 const OUTPUT = {
   schema: {
     type: 'object',
     properties: {
-      text: { type: 'string', description: 'The `/inbox` command output.' },
+      text: { type: 'string', description: 'Human-readable adapter output.' },
     },
     required: ['text'],
     additionalProperties: false,
@@ -42,30 +41,44 @@ const OUTPUT = {
 }
 
 /**
- * Execute one `/inbox` subcommand through the registered command definition.
- * @param {any} commands - commands service.
- * @param {{id: string}|undefined} agent - calling agent.
- * @param {string} rawInput - command arguments.
- * @param {AbortSignal} signal - caller cancellation.
- * @returns {Promise<string>} command output.
+ * Await the live manager, translating a startup failure into a tool error.
+ * @returns {Promise<import('./lib/manager.js').BindingManager>} manager.
  */
-async function runInboxCommand(commands, agent, rawInput, signal) {
-  if (!agent?.id) throw new Error('no calling session for this tool')
-  const definition = commands.find(agent, 'inbox')
-  if (!definition) {
-    throw new Error(
-      'the InboxMosire adapter is not loaded (no /inbox command); install @mosire/dsh-inbox-mosire first',
-    )
+async function manager() {
+  const runtime = await import('./lib/runtime.js')
+  return runtime.waitManager()
+}
+
+/**
+ * Build a descriptor from tool arguments.
+ *
+ * Accepts a `descriptor` object or a descriptor JSON string, or the explicit
+ * contract fields (`inboxId`, `adapterTokenRef`, `apiBaseUrl`, `channels`).
+ *
+ * @param {Record<string, any>} args - tool arguments.
+ * @returns {Record<string, any>} descriptor.
+ */
+function descriptorOf(args) {
+  const record = args && typeof args === 'object' ? args : {}
+  if (typeof record.descriptor === 'string' && record.descriptor.trim() !== '') {
+    try {
+      return JSON.parse(record.descriptor)
+    } catch (error) {
+      throw new Error(`descriptor 不是合法 JSON: ${error.message}`)
+    }
   }
-  const result = await definition.handler({
-    commandId: 'inbox-adapter-tool',
-    agent,
-    rawInput,
-    attachments: [],
-    signal,
-  })
-  if (result?.kind === 'error') throw new Error(result.text || '/inbox command failed')
-  return result?.text ?? ''
+  if (record.descriptor && typeof record.descriptor === 'object') {
+    return record.descriptor
+  }
+  const descriptor = {}
+  if (typeof record.inboxId === 'string') descriptor.inboxId = record.inboxId
+  if (typeof record.adapterTokenRef === 'string') {
+    descriptor.adapterTokenRef = record.adapterTokenRef
+  }
+  if (typeof record.apiBaseUrl === 'string') descriptor.apiBaseUrl = record.apiBaseUrl
+  if (Array.isArray(record.channels)) descriptor.channels = record.channels
+  if (typeof record.label === 'string') descriptor.label = record.label
+  return descriptor
 }
 
 /**
@@ -73,58 +86,90 @@ async function runInboxCommand(commands, agent, rawInput, signal) {
  * @param {any} ctx - Cordis plugin context.
  */
 export function apply(ctx) {
-  const { commands, tools } = ctx
+  const { tools } = ctx
   const register = (definition) => ctx.effect(() => tools.register(definition))
 
   register({
     name: 'inbox_adapter_status',
     description:
-      'Read the InboxMosire wake adapter state: whether this session is the wake target, SSE connection, cursor, board revision, last wake, and any configuration error. Read-only. Use it before binding or when a wake seems missing.',
+      'Read the InboxMosire v2 adapter state: whether the calling session is bound, its inbox/cursor/SSE/occupancy/last wake/config error, and a summary of every other binding in this DSH host. Read-only. Never returns a token.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: OUTPUT,
-    execute: async (_args, exec) => ({
-      text: await runInboxCommand(commands, exec.agent, 'status', exec.signal),
-    }),
+    execute: async (_args, exec) => {
+      const live = await manager()
+      return { text: live.statusText(exec.agent?.id) }
+    },
   })
 
   register({
     name: 'inbox_adapter_bind',
     description:
-      'Bind this DSH session (or an explicitly named session id) as the InboxMosire wake target. Wakes are delivered only while the target session is idle. This is the tool form of the human `/inbox bind` command.',
+      'Bind one DSH session (default: the caller) to an InboxMosire inbox from a BindingDescriptor. Provide inboxId + adapterTokenRef (a file:/absolute path to the 0600 wake token) and optional channels, or pass the whole descriptor. Re-binding the same session replaces its binding; a different inbox resets that session\'s cursor and wake watermark. Wakes are delivered only while the bound session is idle.',
     parameters: {
       type: 'object',
       properties: {
         sessionId: {
           type: 'string',
-          description:
-            'Optional authoritative DSH session id to bind instead of the calling session.',
+          description: 'Target authoritative DSH session id; defaults to the calling session.',
+        },
+        inboxId: { type: 'string', description: 'Inbox id, e.g. app-a.' },
+        adapterTokenRef: {
+          type: 'string',
+          description: 'file:/absolute/path to the 0600 adapter wake token.',
+        },
+        apiBaseUrl: {
+          type: 'string',
+          description: 'Optional InboxMosire API base URL; defaults to the adapter configuration.',
+        },
+        channels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional channel filter (empty means all channels).',
+        },
+        label: { type: 'string', description: 'Optional human label.' },
+        descriptor: {
+          type: 'object',
+          description: 'Optional full descriptor object (overrides the explicit fields).',
         },
       },
       additionalProperties: false,
     },
     output: OUTPUT,
     execute: async (args, exec) => {
-      const explicit =
-        args && typeof args.sessionId === 'string' ? args.sessionId.trim() : ''
-      return {
-        text: await runInboxCommand(
-          commands,
-          exec.agent,
-          explicit ? `bind ${explicit}` : 'bind',
-          exec.signal,
-        ),
-      }
+      const live = await manager()
+      const descriptor = descriptorOf(args)
+      const target =
+        args && typeof args.sessionId === 'string' && args.sessionId.trim() !== ''
+          ? args.sessionId.trim()
+          : String(exec.agent?.id ?? '')
+      const result = await live.bind({ sessionId: target, descriptor })
+      return { text: `${result.message}\n\n${result.status}` }
     },
   })
 
   register({
     name: 'inbox_adapter_unbind',
     description:
-      'Remove the InboxMosire wake binding so the adapter stops delivering wakes. Keeps the board cursor and revision watermarks. This is the tool form of the human `/inbox unbind` command.',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
+      'Remove the InboxMosire wake binding for one session (default: the caller) and clear its advisory occupancy mark. Other sessions keep their bindings.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: {
+          type: 'string',
+          description: 'Target session id; defaults to the calling session.',
+        },
+      },
+      additionalProperties: false,
+    },
     output: OUTPUT,
-    execute: async (_args, exec) => ({
-      text: await runInboxCommand(commands, exec.agent, 'unbind', exec.signal),
-    }),
+    execute: async (args, exec) => {
+      const live = await manager()
+      const target =
+        args && typeof args.sessionId === 'string' && args.sessionId.trim() !== ''
+          ? args.sessionId.trim()
+          : String(exec.agent?.id ?? '')
+      const result = await live.unbind(target)
+      return { text: result.message }
+    },
   })
 }

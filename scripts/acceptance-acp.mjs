@@ -1,48 +1,56 @@
 #!/usr/bin/env node
 /**
- * Real DSH host acceptance: boot the shipped ACP profile with the InboxMosire
- * adapter, drive one session through the standard ACP stdio surface, push
- * notifications while a turn is active, and verify the wake actually reached
- * the model and produced a claim/complete loop.
+ * Real DSH host acceptance for the v2 multi-binding adapter.
  *
- * Usage: node scripts/acceptance-acp.mjs [--keep]
+ * One ACP server, two sessions: S1 binds app-a, S2 binds app-b through the
+ * model-facing `inbox_adapter_bind` tool. The driver pushes one notification to
+ * each inbox and verifies that only the matching session is woken, that
+ * occupancy follows bind/archive, and that archiving S1 leaves S2 working.
  *
- * Exit code 0 means every assertion held. Evidence is printed and also written
- * to /tmp/inbox-mosire-acp/.
+ * Mode A note: no program-owned MCP server is running on this machine, so the
+ * wake turns have no business tools; the driver drains the boards through the
+ * program's own HTTP client surface (the same calls `InboxClientMcpTools`
+ * wraps). The adapter itself never claims or completes anything.
+ *
+ * Usage: node scripts/acceptance-acp.mjs
+ * Exit code 0 means every assertion held; evidence is printed and written to
+ * /tmp/inbox-mosire-acp/acceptance.txt.
  */
 import { spawn } from 'node:child_process'
 import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { McpClient } from '../test/helpers/mcp.mjs'
 import {
   readSessionEvents,
   sessionDir,
-  toolCalls,
   wakeMessages,
 } from '../test/helpers/session-log.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
-const BACKEND = process.env.INBOX_API_URL ?? 'http://127.0.0.1:18765'
-const MCP_URL = process.env.INBOX_MCP_URL ?? 'http://127.0.0.1:18766/mcp'
-const INBOX = process.env.INBOX_SMOKE_INBOX_ID ?? 'smoke'
-const TOKEN_FILE =
-  process.env.INBOX_SMOKE_ADAPTER_TOKEN_FILE ??
-  '/home/cna/InboxMosire/.work/live/secrets/dsh-smoke-adapter.token'
-const PRODUCER_FILE =
-  process.env.INBOX_SMOKE_PRODUCER_TOKEN_FILE ??
-  '/home/cna/InboxMosire/.work/live/secrets/smoke-producer.token'
+const API = process.env.INBOX_API_URL ?? 'http://127.0.0.1:18765'
+const LIVE = '/home/cna/InboxMosire/.work/live'
+const DESCRIPTOR_A = process.env.INBOX_APP_A_BINDING ?? `${LIVE}/bindings/app-a.json`
+const DESCRIPTOR_B = process.env.INBOX_APP_B_BINDING ?? `${LIVE}/bindings/app-b.json`
+const PROGRAM_A =
+  process.env.INBOX_APP_A_PROGRAM_MCP_TOKEN_FILE ?? `${LIVE}/secrets/program-a-mcp.token`
+const PROGRAM_B =
+  process.env.INBOX_APP_B_PROGRAM_MCP_TOKEN_FILE ?? `${LIVE}/secrets/program-b-mcp.token`
 const PROFILE = process.env.INBOX_ACP_PROFILE ?? 'inbox-acp'
 const PATCH = join(ROOT, 'test', 'acp-test.patch.yml')
 const WORK = process.env.INBOX_ACP_WORK ?? '/tmp/inbox-mosire-acp'
-const CWD = join(WORK, 'workspace')
-const KEEP = process.argv.includes('--keep')
+const CWD1 = join(WORK, 'workspace-s1')
+const CWD2 = join(WORK, 'workspace-s2')
 
-const adapterToken = (await readFile(TOKEN_FILE, 'utf8')).trim()
-const producerToken = (await readFile(PRODUCER_FILE, 'utf8')).trim()
+const descriptorA = JSON.parse(await readFile(DESCRIPTOR_A, 'utf8'))
+const descriptorB = JSON.parse(await readFile(DESCRIPTOR_B, 'utf8'))
+const programA = (await readFile(PROGRAM_A, 'utf8')).trim()
+const programB = (await readFile(PROGRAM_B, 'utf8')).trim()
+const wakeA = (await readFile(descriptorA.adapterTokenRef.replace(/^file:/, ''), 'utf8')).trim()
+const wakeB = (await readFile(descriptorB.adapterTokenRef.replace(/^file:/, ''), 'utf8')).trim()
 
 /** Collected evidence lines. */
 const evidence = []
+
 /**
  * Record one evidence line.
  * @param {string} line - text.
@@ -62,7 +70,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 /**
  * Poll until the predicate holds.
  * @param {string} label - failure label.
- * @param {() => Promise<boolean>} predicate - async condition.
+ * @param {() => Promise<boolean>|boolean} predicate - condition.
  * @param {number} [timeoutMs] - budget.
  * @returns {Promise<number>} elapsed milliseconds.
  */
@@ -76,46 +84,89 @@ async function waitUntil(label, predicate, timeoutMs = 60000) {
 }
 
 /**
- * Read the current board status with the adapter token.
- * @returns {Promise<Record<string, any>>} status document.
+ * Call one InboxMosire HTTP endpoint.
+ * @param {string} path - path after the API base.
+ * @param {object} options - request options.
+ * @returns {Promise<any>} parsed JSON.
  */
-async function boardStatus() {
-  const response = await fetch(`${BACKEND}/v1/inboxes/${INBOX}/status`, {
-    headers: { Authorization: `Bearer ${adapterToken}` },
+async function call(path, { token, method = 'GET', body }) {
+  const response = await fetch(`${API}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!response.ok) throw new Error(`status HTTP ${response.status}`)
-  return response.json()
+  const text = await response.text()
+  const json = text ? JSON.parse(text) : null
+  if (!response.ok) throw new Error(`${method} ${path}: HTTP ${response.status}`)
+  return json
 }
 
 /**
- * Push one notification through the producer endpoint.
- * @param {object} input - push fields.
+ * Push one notification with a program token.
+ * @param {string} inbox - inbox id.
+ * @param {string} token - program token.
+ * @param {object} input - item fields.
  * @returns {Promise<Record<string, any>>} push response.
  */
-async function push({ channel = 'ticket', title, payload }) {
-  const response = await fetch(`${BACKEND}/v1/inboxes/${INBOX}/items`, {
+function push(inbox, token, input) {
+  return call(`/v1/inboxes/${inbox}/items`, {
+    token,
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${producerToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      channel,
+    body: {
+      channel: 'ticket',
       kind: 'acceptance',
-      title,
-      payload,
-      dedupeKey: `acp:${Date.now()}:${Math.random()}`,
-    }),
+      dedupeKey: `acp-v2:${Date.now()}:${Math.random()}`,
+      ...input,
+    },
   })
-  if (response.status !== 201 && response.status !== 200) {
-    throw new Error(`push HTTP ${response.status}: ${await response.text()}`)
-  }
-  return response.json()
 }
 
 /**
- * Read the adapter's JSONL log.
- * @returns {Promise<Array<Record<string, any>>>} log entries.
+ * Claim and complete everything available on one inbox.
+ * @param {string} inbox - inbox id.
+ * @param {string} token - program token.
+ * @returns {Promise<number>} completed count.
+ */
+async function drain(inbox, token) {
+  const list = await call(`/v1/inboxes/${inbox}/items`, { token })
+  const ids = (list.items ?? []).map((item) => item.itemId)
+  if (ids.length === 0) return 0
+  const claimed = await call(`/v1/inboxes/${inbox}/claims`, {
+    token,
+    method: 'POST',
+    body: { itemIds: ids },
+  })
+  const completions = (claimed.claimed ?? []).map((item) => ({
+    claimToken: item.claimToken,
+    outcome: 'completed',
+    summary: 'acp v2 acceptance driver',
+  }))
+  if (completions.length > 0) {
+    await call(`/v1/inboxes/${inbox}/claims/complete`, {
+      token,
+      method: 'POST',
+      body: { completions },
+    })
+  }
+  return completions.length
+}
+
+/**
+ * Read occupancy of one inbox.
+ * @param {string} inbox - inbox id.
+ * @param {string} token - wake token (status:read).
+ * @returns {Promise<Record<string, any>>} occupancy.
+ */
+function occupancy(inbox, token) {
+  return call(`/v1/inboxes/${inbox}/occupancy`, { token })
+}
+
+/**
+ * Read the adapter JSONL log.
+ * @returns {Promise<Array<Record<string, any>>>} entries.
  */
 async function adapterLog() {
   try {
@@ -136,8 +187,31 @@ async function adapterLog() {
 }
 
 /**
- * Minimal ACP JSON-RPC client over the child's stdio.
+ * Count adapter log entries matching one message fragment and session.
+ * @param {string} fragment - message fragment.
+ * @param {string} [session] - session id to require.
+ * @returns {Promise<number>} count.
  */
+async function logCount(fragment, session) {
+  const entries = await adapterLog()
+  return entries.filter(
+    (entry) =>
+      String(entry.message ?? '').includes(fragment) &&
+      (session === undefined || String(entry.message ?? '').includes(session)),
+  ).length
+}
+
+/**
+ * Assert one condition.
+ * @param {boolean} condition - must hold.
+ * @param {string} message - assertion text.
+ */
+function assert(condition, message) {
+  if (!condition) throw new Error(`ASSERTION FAILED: ${message}`)
+  note(`  ok: ${message}`)
+}
+
+/** Minimal ACP JSON-RPC client over the child's stdio. */
 class AcpClient {
   /**
    * @param {import('node:stream').Writable} stdin - child stdin.
@@ -147,7 +221,6 @@ class AcpClient {
     this.stdin = stdin
     this.pending = new Map()
     this.nextId = 1
-    this.updates = []
     this.buffer = ''
     stdout.setEncoding('utf8')
     stdout.on('data', (chunk) => this.onData(chunk))
@@ -175,7 +248,7 @@ class AcpClient {
   }
 
   /**
-   * Route one JSON-RPC message.
+   * Route one JSON-RPC frame.
    * @param {Record<string, any>} message - parsed frame.
    */
   onMessage(message) {
@@ -189,16 +262,11 @@ class AcpClient {
       this.pending.delete(message.id)
       if (message.error) pending.reject(new Error(`${pending.method}: ${message.error.message}`))
       else pending.resolve(message.result)
-      return
-    }
-    if (message.method === 'session/update') {
-      this.updates.push(message.params)
-      return
     }
   }
 
   /**
-   * Answer a server-to-client request.
+   * Answer a server request (auto-allow permissions).
    * @param {Record<string, any>} message - request frame.
    */
   onServerRequest(message) {
@@ -226,7 +294,7 @@ class AcpClient {
 
   /**
    * Write one frame.
-   * @param {Record<string, any>} message - JSON-RPC frame.
+   * @param {Record<string, any>} message - frame.
    */
   write(message) {
     this.stdin.write(`${JSON.stringify(message)}\n`)
@@ -236,10 +304,10 @@ class AcpClient {
    * Send one request.
    * @param {string} method - ACP method.
    * @param {Record<string, any>} params - parameters.
-   * @param {number} [timeoutMs] - response budget.
+   * @param {number} [timeoutMs] - budget.
    * @returns {Promise<any>} result.
    */
-  request(method, params, timeoutMs = 120000) {
+  request(method, params, timeoutMs = 180000) {
     const id = this.nextId
     this.nextId += 1
     return new Promise((resolve, reject) => {
@@ -263,26 +331,39 @@ class AcpClient {
   }
 }
 
-/** Print a section header. */
-function section(title) {
-  note('')
-  note(`== ${title}`)
+/**
+ * Prompt one session to bind its descriptor through the adapter tool.
+ * @param {AcpClient} acp - ACP client.
+ * @param {string} sessionId - session id.
+ * @param {Record<string, any>} descriptor - binding descriptor.
+ * @returns {Promise<void>} after the bind turn settles.
+ */
+async function bindThroughTool(acp, sessionId, descriptor) {
+  const args = JSON.stringify({
+    inboxId: descriptor.inboxId,
+    adapterTokenRef: descriptor.adapterTokenRef,
+    apiBaseUrl: descriptor.apiBaseUrl,
+  })
+  const text = [
+    'Call the tool `inbox_adapter_bind` exactly once with these arguments:',
+    args,
+    'Then reply with exactly BIND-OK. Do not call any other tool and do not retry.',
+  ].join('\n')
+  const result = await acp.request('session/prompt', {
+    sessionId,
+    prompt: [{ type: 'text', text }],
+  })
+  note(`bind prompt settled for ${sessionId}: stopReason=${result.stopReason}`)
 }
 
 /** Top-level scenario. */
 async function main() {
   await rm(WORK, { recursive: true, force: true })
-  await mkdir(CWD, { recursive: true })
-
-  const mcp = new McpClient(MCP_URL)
-  await mcp.init()
-  await mcp.drain(INBOX)
-  const baseline = await boardStatus()
-  note(`board baseline: revision=${baseline.revision} available=${baseline.available} claimed=${baseline.claimed}`)
-  if (baseline.available !== 0) throw new Error('smoke board is not empty before the run')
-  if (baseline.claimed > 0) {
-    note(`warning: ${baseline.claimed} claim lease(s) from an earlier run are still open; they expire on their own`)
-  }
+  await mkdir(CWD1, { recursive: true })
+  await mkdir(CWD2, { recursive: true })
+  await drain('app-a', programA)
+  await drain('app-b', programB)
+  note(`boards drained: app-a=${(await call('/v1/inboxes/app-a/status', { token: wakeA })).available} app-b=${(await call('/v1/inboxes/app-b/status', { token: wakeB })).available}`)
 
   const stderr = await open(join(WORK, 'dsh.stderr.log'), 'w')
   const child = spawn('dsh', ['--profile', PROFILE, '--patch', PATCH], {
@@ -292,158 +373,132 @@ async function main() {
   const stderrStream = stderr.createWriteStream()
   child.stderr.pipe(stderrStream)
   const acp = new AcpClient(child.stdin, child.stdout)
-  let sessionId
+  let s1
+  let s2
   try {
-    section('ACP handshake')
+    note('')
+    note('== ACP handshake')
     const init = await acp.request('initialize', {
       protocolVersion: 1,
       clientCapabilities: {},
-      clientInfo: { name: 'inbox-mosire-acceptance', version: '0.1.0' },
+      clientInfo: { name: 'inbox-mosire-v2-acceptance', version: '0.2.0' },
     })
     note(`initialize ok: protocolVersion=${init.protocolVersion}`)
+    s1 = (await acp.request('session/new', { cwd: CWD1, mcpServers: [] })).sessionId
+    s2 = (await acp.request('session/new', { cwd: CWD2, mcpServers: [] })).sessionId
+    note(`S1=${s1} (app-a)`)
+    note(`S2=${s2} (app-b)`)
 
-    const created = await acp.request('session/new', {
-      cwd: CWD,
-      mcpServers: [
-        { name: 'inbox-mosire', type: 'http', url: MCP_URL, headers: [] },
-      ],
-    })
-    sessionId = created.sessionId
-    note(`session/new: ${sessionId}`)
-
-    section('Adapter binding')
-    const bindWait = await waitUntil('adapter binding', async () => {
-      const log = await adapterLog()
-      return log.some((entry) => /绑定|已绑定/.test(entry.message ?? ''))
-    }, 30000)
-    note(`adapter bound after ${bindWait}ms`)
-    const boundLog = (await adapterLog()).filter((entry) => /绑定/.test(entry.message ?? ''))
-    for (const entry of boundLog.slice(0, 3)) note(`adapter: ${entry.message}`)
-
-    section('Active turn with pushes')
-    const promptText = [
-      'Use the bash tool to run exactly `sleep 8`.',
-      'When it finishes, reply with exactly DONE.',
-      'Do not call any other tool.',
-    ].join(' ')
-    const promptPromise = acp.request(
-      'session/prompt',
-      { sessionId, prompt: [{ type: 'text', text: promptText }] },
-      180000,
-    )
-    await delay(1200)
-    const running1 = await boardStatus()
-    const p1 = await push({ title: 'acp-active-1', payload: { secret: 'SECRET-ACP-1' } })
-    note(`pushed #1 while active: revision=${p1.revision} available=${running1.available + 1} at +1.2s`)
-    await delay(1500)
-    const p2 = await push({ title: 'acp-active-2', payload: { secret: 'SECRET-ACP-2' } })
-    note(`pushed #2 while active: revision=${p2.revision} at +2.7s`)
-    const promptResult = await promptPromise
-    note(`first prompt settled: stopReason=${promptResult.stopReason}`)
-
-    section('Wake at turn end')
-    const wakeWait = await waitUntil('adapter wake delivery', async () => {
-      const log = await adapterLog()
-      return log.some((entry) => /已投递唤醒/.test(entry.message ?? ''))
-    }, 60000)
-    note(`adapter delivered a wake ${wakeWait}ms after the first prompt settled`)
-    for (const entry of (await adapterLog()).filter((line) => /唤醒/.test(line.message ?? ''))) {
-      note(`adapter: ${entry.message}`)
-    }
-
-    section('Agent claim / complete loop')
-    const drainWait = await waitUntil('agent to claim and complete', async () => {
-      const status = await boardStatus()
+    note('')
+    note('== Bind each session through inbox_adapter_bind')
+    await bindThroughTool(acp, s1, descriptorA)
+    await bindThroughTool(acp, s2, descriptorB)
+    await waitUntil('two binding engines', async () => {
+      const events = await adapterLog()
       return (
-        status.revision > p2.revision &&
-        status.available === 0 &&
-        status.claimed <= baseline.claimed
+        events.some((entry) => String(entry.message).includes('启动 binding') && String(entry.message).includes(s1)) &&
+        events.some((entry) => String(entry.message).includes('启动 binding') && String(entry.message).includes(s2))
       )
-    }, 180000)
-    const finalStatus = await boardStatus()
-    note(`board drained ${drainWait}ms after the wake: revision=${finalStatus.revision} available=${finalStatus.available} claimed=${finalStatus.claimed}`)
+    }, 30000)
+    note('adapter started one engine per session')
 
-    section('Archived session receives no wake')
-    await acp.request('session/close', { sessionId }, 30000)
-    const archiveWait = await waitUntil('adapter to observe the disposed session', async () => {
-      const log = await adapterLog()
-      return log.some((entry) => /已卸载或归档|停止投递/.test(entry.message ?? ''))
-    }, 20000)
-    note(`adapter stopped delivery ${archiveWait}ms after session/close`)
-    const wakesBeforeArchive = (await adapterLog()).filter((entry) =>
-      /已投递唤醒/.test(entry.message ?? ''),
-    ).length
-    const archivedPush = await push({
-      title: 'acp-archived',
-      payload: { secret: 'SECRET-ACP-ARCHIVED' },
-    })
-    note(`pushed revision=${archivedPush.revision} after the session was closed`)
-    await delay(3000)
-    const wakesAfterArchive = (await adapterLog()).filter((entry) =>
-      /已投递唤醒/.test(entry.message ?? ''),
-    ).length
-    assert(
-      wakesAfterArchive === wakesBeforeArchive,
-      'an archived session is never woken',
-    )
-    const afterArchiveStatus = await boardStatus()
-    assert(
-      afterArchiveStatus.available >= 1,
-      'the pushed item stayed on the board (nobody consumed it)',
-    )
-    await mcp.drain(INBOX)
-    note(`drained the archived-session notification(s): available=${(await boardStatus()).available}`)
+    const occA = await occupancy('app-a', wakeA)
+    const occB = await occupancy('app-b', wakeB)
+    note(`occupancy: app-a=${occA.occupiedBy ?? 'none'} app-b=${occB.occupiedBy ?? 'none'}`)
+    assert(occA.occupiedBy === s1, 'app-a occupancy names S1')
+    assert(occB.occupiedBy === s2, 'app-b occupancy names S2')
 
-    section('Durable session log')
+    note('')
+    note('== Push one notification per inbox')
+    const pushedA = await push('app-a', programA, { title: 'v2-acp-a', payload: { side: 'a' } })
+    const pushedB = await push('app-b', programB, { title: 'v2-acp-b', payload: { side: 'b' } })
+    note(`pushed app-a revision=${pushedA.revision}, app-b revision=${pushedB.revision}`)
+
+    await waitUntil('S1 wake', () => logCount('已投递唤醒', s1), 60000)
+    await waitUntil('S2 wake', () => logCount('已投递唤醒', s2), 60000)
+    const wakes = (await adapterLog()).filter((entry) => String(entry.message).includes('已投递唤醒'))
+    for (const entry of wakes) note(`adapter: ${entry.message}`)
+    const s1Wake = wakes.find((entry) => String(entry.message).includes(s1))
+    const s2Wake = wakes.find((entry) => String(entry.message).includes(s2))
+    assert(s1Wake && s1Wake.message.includes('"inbox":"app-a"'), 'S1 woken for app-a')
+    assert(s2Wake && s2Wake.message.includes('"inbox":"app-b"'), 'S2 woken for app-b')
+    assert(!wakes.some((entry) => String(entry.message).includes(s1) && String(entry.message).includes('app-b')), 'S1 never receives app-b')
+    assert(!wakes.some((entry) => String(entry.message).includes(s2) && String(entry.message).includes('app-a')), 'S2 never receives app-a')
+
+    // Drain the boards, then cancel the autonomous wake turns so both
+    // sessions return to idle deterministically before the archive test.
+    await drain('app-a', programA)
+    await drain('app-b', programB)
+    await acp.request('session/cancel', { sessionId: s1 }).catch(() => {})
+    await acp.request('session/cancel', { sessionId: s2 }).catch(() => {})
+    await delay(2500)
+    note('wake turns cancelled; both sessions idle')
+
+    note('')
+    note('== Archive S1; S2 must keep working')
+    await acp.request('session/close', { sessionId: s1 }, 60000)
+    await waitUntil('app-a occupancy cleared', async () => {
+      const value = await occupancy('app-a', wakeA)
+      return value.occupied === false
+    }, 30000)
+    const occBAfter = await occupancy('app-b', wakeB)
+    assert(occBAfter.occupiedBy === s2, 'app-b still occupied by S2 after S1 archive')
+
+    const wakesBeforeB2 = await logCount('已投递唤醒', s2)
+    const s1WakesBeforeB2 = await logCount('已投递唤醒', s1)
+    const pushedB2 = await push('app-b', programB, { title: 'v2-acp-b2', payload: { side: 'b2' } })
+    await waitUntil('S2 second wake', async () => (await logCount('已投递唤醒', s2)) > wakesBeforeB2, 90000)
+    note(`S2 woken again for app-b revision=${pushedB2.revision}`)
+    assert(
+      (await logCount('已投递唤醒', s1)) === s1WakesBeforeB2,
+      'archived S1 receives no further wake',
+    )
+    await drain('app-b', programB)
+    await delay(1500)
+
+    note('')
+    note('== Close S2 and inspect durable session logs')
+    await acp.request('session/close', { sessionId: s2 }, 60000)
+    await waitUntil('app-b occupancy cleared', async () => {
+      const value = await occupancy('app-b', wakeB)
+      return value.occupied === false
+    }, 30000)
     await delay(500)
-    const directory = await sessionDir(sessionId, CWD)
-    if (!directory) throw new Error('session directory not found')
-    const events = await readSessionEvents(directory)
-    const wakes = wakeMessages(events)
-    const calls = toolCalls(events)
-    const turnEnds = events.filter((event) => event.type === 'turn/end')
-    note(`log: ${events.length} records from ${directory}`)
-    note(`log: turn/end count=${turnEnds.length}`)
-    note(`log: inbox-mosire wake messages=${wakes.length}`)
-    for (const wake of wakes) {
-      note(`log: wake seq=${wake.seq} text=${JSON.stringify(wake.data?.content?.[0]?.text ?? '')}`)
-    }
-    const inboxTools = calls.filter((call) => /inbox_/.test(call.data?.name ?? ''))
-    note(`log: tool calls=${calls.map((call) => call.data?.name).join(',')}`)
-    note(`log: inbox tool calls=${inboxTools.length} (${inboxTools.map((call) => call.data?.name).join(',')})`)
 
-    section('Assertions')
-    assert(wakes.length === 1, `exactly one wake message, got ${wakes.length}`)
-    assert(
-      turnEnds.length >= 2,
-      `at least two turns (initial + wake), got ${turnEnds.length}`,
-    )
-    const firstTurnEnd = turnEnds[0].seq
-    assert(
-      wakes[0].seq > firstTurnEnd,
-      `wake seq ${wakes[0].seq} must follow the first turn end ${firstTurnEnd}`,
-    )
-    assert(
-      inboxTools.some((call) => call.data?.name?.includes('inbox_list')),
-      'the agent called inbox_list after the wake',
-    )
-    assert(
-      inboxTools.some((call) => call.data?.name?.includes('inbox_claim')),
-      'the agent called inbox_claim after the wake',
-    )
-    assert(
-      inboxTools.some((call) => call.data?.name?.includes('inbox_complete')),
-      'the agent called inbox_complete after the wake',
-    )
-    assert(finalStatus.available === 0, 'the board is empty')
-    const wakeText = JSON.stringify(wakes)
-    for (const secret of ['SECRET-ACP-1', 'SECRET-ACP-2', 'acp-active-1', 'acp-active-2', adapterToken, producerToken]) {
-      assert(!wakeText.includes(secret), `wake message must not contain ${secret.slice(0, 12)}…`)
+    const dir1 = await sessionDir(s1, CWD1)
+    const dir2 = await sessionDir(s2, CWD2)
+    if (!dir1 || !dir2) throw new Error('session log directory missing')
+    const wakes1 = wakeMessages(await readSessionEvents(dir1))
+    const wakes2 = wakeMessages(await readSessionEvents(dir2))
+    note(`S1 wake messages=${wakes1.length}, S2 wake messages=${wakes2.length}`)
+    for (const wake of wakes1) {
+      const text = wake.data?.content?.[0]?.text ?? ''
+      note(`S1 wake seq=${wake.seq}: ${JSON.stringify(text.split('\n')[1] ?? '')}`)
     }
-    note('all assertions passed')
+    for (const wake of wakes2) {
+      const text = wake.data?.content?.[0]?.text ?? ''
+      note(`S2 wake seq=${wake.seq}: ${JSON.stringify(text.split('\n')[1] ?? '')}`)
+    }
+    assert(wakes1.length >= 1 && wakes1.every((wake) => (wake.data?.content?.[0]?.text ?? '').includes('inbox=app-a')), 'S1 log contains app-a wakes only')
+    assert(wakes2.length >= 2 && wakes2.every((wake) => (wake.data?.content?.[0]?.text ?? '').includes('inbox=app-b')), 'S2 log contains app-b wakes only')
+    const allText = [...wakes1, ...wakes2]
+      .map((wake) => wake.data?.content?.[0]?.text ?? '')
+      .join('\n')
+    for (const secret of ['v2-acp-a', 'v2-acp-b', 'v2-acp-b2', 'itm_', 'clm_', programA, programB, wakeA, wakeB]) {
+      assert(!allText.includes(secret), `wake messages contain no ${secret.slice(0, 10)}…`)
+    }
+    const finalA = await call('/v1/inboxes/app-a/status', { token: wakeA })
+    const finalB = await call('/v1/inboxes/app-b/status', { token: wakeB })
+    note(`final: app-a available=${finalA.available} occupied=${finalA.occupied}; app-b available=${finalB.available} occupied=${finalB.occupied}`)
+    assert(finalA.available === 0 && finalA.occupied === false, 'app-a left clean')
+    assert(finalB.available === 0 && finalB.occupied === false, 'app-b left clean')
+    note('')
+    note('all v2 assertions passed')
   } finally {
-    section('Teardown')
-    await acp.request('session/close', { sessionId }, 10000).catch(() => {})
+    note('')
+    note('== Teardown')
+    await acp.request('session/close', { sessionId: s1 }, 10000).catch(() => {})
+    await acp.request('session/close', { sessionId: s2 }, 10000).catch(() => {})
     child.kill('SIGTERM')
     await new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -457,24 +512,12 @@ async function main() {
     })
     await stderrStream.end()
     await stderr.close().catch(() => {})
-    await mcp.close().catch(() => {})
-    await writeFile(join(WORK, 'acceptance.txt'), `${evidence.join('\n')}\n`)
-    if (!KEEP) {
-      // Keep the evidence directory; the workspace is disposable.
-      await rm(CWD, { recursive: true, force: true }).catch(() => {})
-      await mkdir(CWD, { recursive: true }).catch(() => {})
-    }
+    await writeFile(join(WORK, 'acceptance.txt'), `${evidence.join('\n')}\n`).catch(() => {})
+    await drain('app-a', programA).catch(() => {})
+    await drain('app-b', programB).catch(() => {})
+    await rm(CWD1, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {})
+    await rm(CWD2, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {})
   }
-}
-
-/**
- * Assert one condition.
- * @param {boolean} condition - must be true.
- * @param {string} message - failure text.
- */
-function assert(condition, message) {
-  if (!condition) throw new Error(`ASSERTION FAILED: ${message}`)
-  note(`  ok: ${message}`)
 }
 
 await main().catch((error) => {

@@ -199,7 +199,7 @@ test('an invalid cursor is dropped and the stream reconnects from the tip', asyn
   const host = createFakeHost()
   host.createAgent('session-test')
   const dir = await mkdtemp(join(tmpdir(), 'inbox-cursor-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))
   const stateFile = join(dir, 'state.json')
   await writeFile(
     stateFile,
@@ -267,7 +267,7 @@ test('RESTART: an interrupted wake is treated as delivered (at-most-once)', asyn
   const host = createFakeHost()
   host.createAgent('session-test')
   const dir = await mkdtemp(join(tmpdir(), 'inbox-pending-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))
   const stateFile = join(dir, 'state.json')
   server.push({ channel: 'ticket' })
   server.push({ channel: 'ticket' })
@@ -361,21 +361,32 @@ test('PRIVACY: wake text, state, and log never contain item content or the token
   }
 })
 
-test('the plugin entry registers /inbox and reports status through it', async (t) => {
-  const server = await startFakeInbox()
+test('the plugin entry wires a v2 manager and the /inbox command', async (t) => {
+  const server = await startFakeInbox({ inbox: 'app-a' })
   t.after(() => server.close())
   const host = createFakeHost()
   host.createAgent('session-test')
   const home = await mkdtemp(join(tmpdir(), 'inbox-home-'))
-  t.after(() => rm(home, { recursive: true, force: true }))
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))
+  const tokenFile = join(home, 'wake.token')
+  await writeFile(tokenFile, `${server.token}\n`, { mode: 0o600 })
+  const descriptorFile = join(home, 'binding.json')
+  await writeFile(
+    descriptorFile,
+    JSON.stringify({
+      inboxId: 'app-a',
+      apiBaseUrl: server.url,
+      adapterTokenRef: `file:${tokenFile}`,
+      channels: [],
+      label: 'entry-test',
+    }),
+  )
   const saved = { ...process.env }
   Object.assign(process.env, {
     DSH_HOME: home,
     INBOX_API_URL: server.url,
-    INBOX_INBOX_ID: 'smoke',
-    INBOX_API_TOKEN: 'test-token',
-    INBOX_SESSION_ID: 'session-test',
-    INBOX_CHANNELS: 'ticket',
+    INBOX_STATE_FILE: join(home, 'state.json'),
+    INBOX_LOG_FILE: join(home, 'adapter.log'),
     INBOX_WAKE_DEBOUNCE_MS: '20',
   })
   t.after(() => {
@@ -389,31 +400,28 @@ test('the plugin entry registers /inbox and reports status through it', async (t
   await waitFor(() => host.commands.length === 1, { label: '/inbox registration' })
   const definition = host.commands[0]
   assert.equal(definition.name, 'inbox')
-  const result = await definition.handler({
-    rawInput: 'status',
-    agent: { id: 'session-test' },
-  })
-  assert.equal(result.kind, 'success')
-  assert.match(result.text, /InboxMosire adapter/)
-  assert.match(result.text, /inbox=smoke/)
-  assert.match(result.text, /session=session-test/)
+
+  const empty = await definition.handler({ rawInput: 'status', agent: { id: 'session-test' } })
+  assert.equal(empty.kind, 'success')
+  assert.match(empty.text, /0 binding\(s\)/)
+  assert.match(empty.text, /isBound=false/)
 
   const bound = await definition.handler({
-    rawInput: 'bind',
+    rawInput: `bind ${descriptorFile}`,
     agent: { id: 'session-test' },
   })
-  assert.match(bound.text, /已绑定 session-test/)
+  assert.match(bound.text, /已绑定 session-test → app-a/)
+  assert.match(bound.text, /isBound=true inbox=app-a/)
   await waitFor(() => server.connectionCount === 1, { label: 'SSE through plugin entry' })
   server.push({ channel: 'ticket' })
   await waitFor(() => host.followups.length === 1, { label: 'wake through plugin entry' })
 
-  const paused = await definition.handler({
-    rawInput: 'pause',
+  const removed = await definition.handler({
+    rawInput: 'unbind',
     agent: { id: 'session-test' },
   })
-  assert.match(paused.text, /暂停/)
-  await delay(80)
-  assert.equal(server.connectionCount, 0)
+  assert.match(removed.text, /已解绑 session-test/)
+  await waitFor(() => server.connectionCount === 0, { label: 'SSE closed after unbind' })
 
   await host.disposeAll()
 })

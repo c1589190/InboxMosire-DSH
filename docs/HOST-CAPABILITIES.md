@@ -135,3 +135,19 @@ host capability.
 The only contract item DSH does not provide natively is a followup idempotency
 key; the adapter supplies it through persisted revision watermarks and a
 deterministic message id.
+
+---
+
+## v2 multi-binding note (2026-10-25)
+
+The v2 upgrade reuses the same Host hooks and adds nothing host-specific:
+
+- one `InboxAdapter` engine per binding, each driven by the same
+  `agent.followup()` / `agent/status` / `session/event` / `agent/created` /
+  `agent/disposed` surfaces documented above;
+- `ctx.tools.register()` (section 7) exposes `inbox_adapter_status|bind|unbind`;
+  the tools resolve the live manager through an in-process module singleton
+  (`lib/runtime.js`) because the engine and tool rows are separate loader rows;
+- advisory occupancy is a backend HTTP endpoint, not a Host capability;
+- `agent.id` remains the only binding key, so a descriptor for a different
+  session cannot be silently applied to the caller.

@@ -18,7 +18,7 @@ import {
  */
 async function tempDir(t) {
   const dir = await mkdtemp(join(tmpdir(), 'inbox-config-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))
   return dir
 }
 

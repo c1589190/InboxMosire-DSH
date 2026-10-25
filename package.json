@@ -1,9 +1,9 @@
 {
   "name": "@mosire/dsh-inbox-mosire",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "InboxMosire wake adapter for DeepSeek Harness: subscribes to an InboxMosire inbox over SSE and wakes the bound DSH session with a fixed host event.",
+  "description": "InboxMosire v2 multi-binding wake adapter for DeepSeek Harness: one binding per session, descriptor-based bind/unbind tools, per-binding SSE/cursor/wake isolation, and advisory occupancy.",
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json",

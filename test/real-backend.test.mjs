@@ -1,246 +1,242 @@
 /**
- * Real-backend acceptance: the adapter against the live InboxMosire daemon on
- * the `smoke` inbox, with a fake DSH host and a real MCP client standing in for
- * the Agent's claim/complete loop.
+ * Real-backend v2 acceptance: one DSH host, two sessions, two inboxes.
  *
- * Skipped when the daemon or its local secret files are absent. The scenarios
- * drain everything they create so the smoke board is left clean.
+ * Uses the live daemon and the Mode A artifacts produced by the backend:
+ * `bindings/app-a.json`, `bindings/app-b.json`, the 0600 wake tokens they
+ * reference, and the program MCP tokens (used here through the program's HTTP
+ * action surface — the same calls `InboxClientMcpTools` makes).
+ *
+ * Skipped when the daemon, descriptors, or secrets are absent. Every item the
+ * run creates is completed and both occupancy marks are cleared.
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { renderWakeTemplate } from '../lib/template.js'
-import { createFakeHost, createTestAdapter, delay, waitFor } from './helpers/fake-host.mjs'
-import { McpClient } from './helpers/mcp.mjs'
+import { createFakeHost, createTestManager, waitFor } from './helpers/fake-host.mjs'
 
-const BACKEND = process.env.INBOX_API_URL ?? 'http://127.0.0.1:18765'
-const MCP_URL = process.env.INBOX_MCP_URL ?? 'http://127.0.0.1:18766/mcp'
-const INBOX = process.env.INBOX_SMOKE_INBOX_ID ?? 'smoke'
-const ADAPTER_TOKEN_FILE =
-  process.env.INBOX_SMOKE_ADAPTER_TOKEN_FILE ??
-  '/home/cna/InboxMosire/.work/live/secrets/dsh-smoke-adapter.token'
-const PRODUCER_TOKEN_FILE =
-  process.env.INBOX_SMOKE_PRODUCER_TOKEN_FILE ??
-  '/home/cna/InboxMosire/.work/live/secrets/smoke-producer.token'
+const API = process.env.INBOX_API_URL ?? 'http://127.0.0.1:18765'
+const LIVE = '/home/cna/InboxMosire/.work/live'
+const DESCRIPTOR_A = process.env.INBOX_APP_A_BINDING ?? `${LIVE}/bindings/app-a.json`
+const DESCRIPTOR_B = process.env.INBOX_APP_B_BINDING ?? `${LIVE}/bindings/app-b.json`
+const PROGRAM_A = process.env.INBOX_APP_A_PROGRAM_MCP_TOKEN_FILE ?? `${LIVE}/secrets/program-a-mcp.token`
+const PROGRAM_B = process.env.INBOX_APP_B_PROGRAM_MCP_TOKEN_FILE ?? `${LIVE}/secrets/program-b-mcp.token`
 
 /**
  * Probe the daemon.
- * @returns {Promise<boolean>} whether it answered `healthz`.
+ * @returns {Promise<boolean>} whether `healthz` answered.
  */
 async function probe() {
   try {
-    const response = await fetch(`${BACKEND}/healthz`, {
-      signal: AbortSignal.timeout(1500),
-    })
+    const response = await fetch(`${API}/healthz`, { signal: AbortSignal.timeout(1500) })
     return response.ok
   } catch {
     return false
   }
 }
 
-const adb = existsSync(ADAPTER_TOKEN_FILE)
-const prod = existsSync(PRODUCER_TOKEN_FILE)
-const alive = adb && prod ? await probe() : false
-const SKIP = alive ? false : `InboxMosire smoke backend unavailable (${BACKEND})`
-const adapterToken = alive ? (await readFile(ADAPTER_TOKEN_FILE, 'utf8')).trim() : ''
-const producerToken = alive ? (await readFile(PRODUCER_TOKEN_FILE, 'utf8')).trim() : ''
+const ready =
+  existsSync(DESCRIPTOR_A) && existsSync(DESCRIPTOR_B) && existsSync(PROGRAM_A) && existsSync(PROGRAM_B)
+    ? await probe()
+    : false
+const SKIP = ready ? false : `live InboxMosire/v2 artifacts unavailable (${API})`
+
+const programA = ready ? (await readFile(PROGRAM_A, 'utf8')).trim() : ''
+const programB = ready ? (await readFile(PROGRAM_B, 'utf8')).trim() : ''
+const descriptorA = ready ? JSON.parse(await readFile(DESCRIPTOR_A, 'utf8')) : {}
+const descriptorB = ready ? JSON.parse(await readFile(DESCRIPTOR_B, 'utf8')) : {}
+const wakeA = ready ? (await readFile(descriptorA.adapterTokenRef.replace(/^file:/, ''), 'utf8')).trim() : ''
+const wakeB = ready ? (await readFile(descriptorB.adapterTokenRef.replace(/^file:/, ''), 'utf8')).trim() : ''
 
 /**
- * Push one notification through the producer endpoint.
- * @param {object} input - push fields.
+ * Call one InboxMosire HTTP endpoint.
+ * @param {string} path - path after the API base.
+ * @param {object} options - request options.
+ * @param {string} options.token - bearer token.
+ * @param {string} [options.method] - HTTP method.
+ * @param {Record<string, unknown>} [options.body] - JSON body.
+ * @returns {Promise<{status: number, json: any}>} response.
+ */
+async function call(path, { token, method = 'GET', body }) {
+  const response = await fetch(`${API}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const text = await response.text()
+  return { status: response.status, json: text ? JSON.parse(text) : null }
+}
+
+/**
+ * Claim and complete every available item on one inbox.
+ * @param {string} inbox - inbox id.
+ * @param {string} token - program token.
+ * @returns {Promise<number>} completed item count.
+ */
+async function drain(inbox, token) {
+  const list = await call(`/v1/inboxes/${inbox}/items`, { token })
+  assert.equal(list.status, 200, `list ${inbox}`)
+  const ids = (list.json.items ?? []).map((item) => item.itemId)
+  if (ids.length === 0) return 0
+  const claimed = await call(`/v1/inboxes/${inbox}/claims`, {
+    token,
+    method: 'POST',
+    body: { itemIds: ids },
+  })
+  assert.equal(claimed.status, 200, `claim ${inbox}`)
+  const completions = (claimed.json.claimed ?? []).map((item) => ({
+    claimToken: item.claimToken,
+    outcome: 'completed',
+    summary: 'v2 acceptance harness',
+  }))
+  if (completions.length === 0) return 0
+  const completed = await call(`/v1/inboxes/${inbox}/claims/complete`, {
+    token,
+    method: 'POST',
+    body: { completions },
+  })
+  assert.equal(completed.status, 200, `complete ${inbox}`)
+  return completions.length
+}
+
+/**
+ * Push one notification with a program token.
+ * @param {string} inbox - inbox id.
+ * @param {string} token - program token.
+ * @param {object} input - item fields.
  * @returns {Promise<Record<string, any>>} push response.
  */
-async function push({ channel = 'ticket', title, payload, dedupeKey }) {
-  const response = await fetch(`${BACKEND}/v1/inboxes/${INBOX}/items`, {
+async function push(inbox, token, input) {
+  const response = await call(`/v1/inboxes/${inbox}/items`, {
+    token,
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${producerToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      channel,
+    body: {
+      channel: 'ticket',
       kind: 'acceptance',
-      title,
-      payload,
-      dedupeKey: dedupeKey ?? `acceptance:${Date.now()}:${Math.random()}`,
-    }),
+      dedupeKey: `v2:${Date.now()}:${Math.random()}`,
+      ...input,
+    },
   })
-  assert.ok(response.status === 201 || response.status === 200, `push HTTP ${response.status}`)
-  return response.json()
+  assert.ok(response.status === 201 || response.status === 200, `push ${inbox}: ${response.status}`)
+  return response.json
 }
 
-/**
- * Read the live board status with the adapter token.
- * @returns {Promise<Record<string, any>>} status document.
- */
-async function boardStatus() {
-  const response = await fetch(`${BACKEND}/v1/inboxes/${INBOX}/status`, {
-    headers: { Authorization: `Bearer ${adapterToken}` },
-  })
-  assert.equal(response.status, 200)
-  return response.json()
-}
-
-/**
- * Wait until the adapter's SSE stream is established.
- * @param {Record<string, any>} adapter - adapter under test.
- * @returns {Promise<void>} after the connection is reported.
- */
-function waitConnected(adapter) {
-  return waitFor(() => adapter.snapshot().health.sse === 'connected', {
-    timeoutMs: 5000,
-    label: 'real SSE connection',
-  })
-}
-
-test('real backend: empty board, one wake, claim/complete loop, dedupe, restart', { skip: SKIP }, async (t) => {
-  const mcp = new McpClient(MCP_URL)
-  await mcp.init()
-  t.after(() => mcp.close())
-  await mcp.drain(INBOX)
-  assert.equal((await boardStatus()).available, 0, 'smoke board starts clean')
+test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', { skip: SKIP }, async (t) => {
+  await drain('app-a', programA)
+  await drain('app-b', programB)
+  const pushedA = await push('app-a', programA, { title: 'v2-isolation-a', payload: { side: 'a' } })
+  const pushedB = await push('app-b', programB, { title: 'v2-isolation-b', payload: { side: 'b' } })
 
   const host = createFakeHost()
-  const agent = host.createAgent('session-test')
-  const first = await createTestAdapter({
-    host,
-    connection: { apiUrl: BACKEND, inboxId: INBOX, channels: ['ticket'], token: adapterToken },
-    overrides: { debounceMs: 50, requestTimeoutMs: 5000, reconnectBaseMs: 200 },
-  })
-  t.after(() => first.adapter.stop())
+  host.createAgent('session-a')
+  host.createAgent('session-b')
+  const first = await createTestManager({ host })
+  t.after(() => first.manager.stop())
+  await first.manager.start()
 
-  // 1. Empty board: no wake.
-  await first.adapter.start()
-  await waitConnected(first.adapter)
-  await delay(400)
-  assert.equal(host.followups.length, 0, 'empty board stays silent')
+  const boundA = await first.manager.bind({ sessionId: 'session-a', descriptor: descriptorA })
+  const boundB = await first.manager.bind({ sessionId: 'session-b', descriptor: descriptorB })
+  assert.equal(boundA.ok, true, boundA.message)
+  assert.equal(boundB.ok, true, boundB.message)
 
-  // 2. One push on an idle session: exactly one fixed-template wake.
-  const secretTitle = `SECRET-TITLE-${Date.now()}`
-  const secretBody = `SECRET-BODY-${Date.now()}`
-  const pushed = await push({ title: secretTitle, payload: { body: secretBody } })
-  await waitFor(() => host.followups.length === 1, { label: 'real wake', timeoutMs: 6000 })
-  const expected = renderWakeTemplate({
-    inboxId: INBOX,
-    revision: pushed.revision,
-    available: 1,
-    channels: ['ticket'],
-  })
-  assert.equal(host.followups[0].message.content[0].text, expected)
-  assert.ok(!expected.includes(secretTitle) && !expected.includes(secretBody))
-
-  // 3. Agent claims and completes, then ends the turn; the board is empty.
-  const claimed = await mcp.claimAll(INBOX)
-  assert.equal(claimed.length, 1)
-  assert.equal(claimed[0].payload.body, secretBody, 'payload exists only in the claim result')
-  await mcp.completeAll(INBOX, claimed)
-  const afterComplete = await boardStatus()
-  assert.equal(afterComplete.available, 0)
-  host.endTurn(agent)
-  await delay(500)
-  assert.equal(host.followups.length, 1, 'no wake once the board is empty')
-
-  // 4. Same revision is not woken twice.
-  const second = await push({ title: 'dedupe', payload: { n: 2 } })
-  await waitFor(() => host.followups.length === 2, { label: 'second wake', timeoutMs: 6000 })
-  host.endTurn(agent)
-  await delay(600)
-  assert.equal(host.followups.length, 2, 'unchanged board and revision stay silent')
-  assert.ok(second.revision > pushed.revision)
-
-  // 5. Restart: cursor and watermark survive; a notification pushed while the
-  // adapter is down is delivered once after reconnecting with Last-Event-ID.
-  await first.adapter.whenSettled()
-  const cursorBefore = first.adapter.snapshot().cursor
-  const watermarkBefore = first.adapter.snapshot().lastWokenRevision
-  assert.equal(watermarkBefore, second.revision)
-  await first.adapter.stop()
-  const offlinePush = await push({ title: 'offline', payload: { n: 3 } })
-
-  const restartedHost = createFakeHost()
-  const restartedAgent = restartedHost.createAgent('session-test')
-  const second2 = await createTestAdapter({
-    host: restartedHost,
-    connection: { apiUrl: BACKEND, inboxId: INBOX, channels: ['ticket'], token: adapterToken },
-    overrides: { debounceMs: 50, requestTimeoutMs: 5000, reconnectBaseMs: 200 },
-    stateFile: first.stateFile,
-  })
-  t.after(() => second2.adapter.stop())
-  await second2.adapter.start()
-  await waitConnected(second2.adapter)
-  assert.equal(second2.adapter.snapshot().cursor, cursorBefore, 'cursor restored from disk')
-  await waitFor(() => restartedHost.followups.length === 1, {
-    label: 'wake after restart',
-    timeoutMs: 6000,
-  })
-  assert.match(
-    restartedHost.followups[0].message.content[0].text,
-    new RegExp(`revision=${offlinePush.revision}`),
+  await waitFor(
+    () => host.followups.filter((entry) => entry.agentId === 'session-a').length === 1,
+    { label: 'session-a wake', timeoutMs: 8000 },
   )
-  await delay(400)
-  assert.equal(restartedHost.followups.length, 1, 'one wake only')
-
-  // 6. Claim two of three available items and complete one: the unclaimed
-  // notification keeps the loop alive after turn end.
-  await push({ title: 'second-a', payload: { n: 4 } })
-  await push({ title: 'second-b', payload: { n: 5 } })
-  const before = await boardStatus()
-  assert.ok(before.available >= 3, `expected 3 available, got ${before.available}`)
-  const partial = await mcp.claimSome(INBOX, 2)
-  assert.equal(partial.length, 2)
-  await mcp.completeAll(INBOX, partial.slice(0, 1))
-  assert.equal((await boardStatus()).available, before.available - 2)
-  restartedAgent.status = 'running'
-  restartedHost.emit('agent/status', { agent: restartedAgent, status: 'running' })
-  restartedHost.endTurn(restartedAgent)
-  await waitFor(() => restartedHost.followups.length === 2, {
-    label: 'remaining work wake',
-    timeoutMs: 6000,
-  })
-  assert.match(
-    restartedHost.followups[1].message.content[0].text,
-    new RegExp(`available=${before.available - 2}`),
+  await waitFor(
+    () => host.followups.filter((entry) => entry.agentId === 'session-b').length === 1,
+    { label: 'session-b wake', timeoutMs: 8000 },
   )
-  // Finish the in-progress claim and drain whatever is left, so the smoke
-  // board is returned to available=0/claimed=0 rather than leaving an orphan
-  // lease behind for the next run.
-  await mcp.completeAll(INBOX, partial.slice(1))
-  const rest = await mcp.claimAll(INBOX)
-  await mcp.completeAll(INBOX, rest)
-  const cleaned = await boardStatus()
-  assert.equal(cleaned.available, 0)
-  assert.equal(cleaned.claimed, 0, 'the smoke board is left clean')
+  const wakeTextA = host.followups.find((entry) => entry.agentId === 'session-a').message.content[0].text
+  const wakeTextB = host.followups.find((entry) => entry.agentId === 'session-b').message.content[0].text
+  assert.match(wakeTextA, new RegExp(`inbox=app-a revision=${pushedA.revision}`))
+  assert.match(wakeTextB, new RegExp(`inbox=app-b revision=${pushedB.revision}`))
+  assert.ok(!wakeTextA.includes('v2-isolation-a'))
+  assert.ok(!wakeTextA.includes('app-b'))
+  assert.ok(!wakeTextB.includes('app-a'))
 
-  // 7. Privacy: no title, payload, or token in wake text, state, or log.
-  await second2.adapter.whenSettled()
-  await delay(200)
-  const wakeText = restartedHost.followups.map((entry) => entry.message.content[0].text).join('\n')
-  const stateText = await readFile(second2.adapter.config.stateFile, 'utf8')
-  const logText = await readFile(second2.adapter.config.logFile, 'utf8').catch(() => '')
-  for (const haystack of [wakeText, stateText, logText]) {
-    assert.ok(!haystack.includes('SECRET-TITLE'))
-    assert.ok(!haystack.includes('SECRET-BODY'))
-    assert.ok(!haystack.includes(adapterToken))
-    assert.ok(!haystack.includes(producerToken))
-  }
-})
+  const occupancyA = await call('/v1/inboxes/app-a/occupancy', { token: wakeA })
+  const occupancyB = await call('/v1/inboxes/app-b/occupancy', { token: wakeB })
+  assert.equal(occupancyA.json.occupiedBy, 'session-a')
+  assert.equal(occupancyB.json.occupiedBy, 'session-b')
 
-test('real backend: a bad token is a fail-closed configuration error', { skip: SKIP }, async () => {
-  const host = createFakeHost()
-  host.createAgent('session-test')
-  const created = await createTestAdapter({
-    host,
-    connection: { apiUrl: BACKEND, inboxId: INBOX, channels: ['ticket'], token: 'not-a-token' },
-    overrides: { debounceMs: 20, requestTimeoutMs: 3000 },
+  // Drain via the program's own client surface, then end both turns: no wake.
+  await drain('app-a', programA)
+  await drain('app-b', programB)
+  host.endTurn(host.agents.get('session-a'))
+  host.endTurn(host.agents.get('session-b'))
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  assert.equal(host.followups.length, 2, 'an empty board stays silent')
+
+  // A new item on app-a wakes only session-a.
+  host.endTurn(host.agents.get('session-a'))
+  await push('app-a', programA, { title: 'v2-isolation-a2', payload: { round: 2 } })
+  await waitFor(
+    () => host.followups.filter((entry) => entry.agentId === 'session-a').length === 2,
+    { label: 'second A wake', timeoutMs: 8000 },
+  )
+  assert.equal(host.followups.filter((entry) => entry.agentId === 'session-b').length, 1, 'B untouched')
+  host.endTurn(host.agents.get('session-a'))
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  assert.equal(
+    host.followups.filter((entry) => entry.agentId === 'session-a').length,
+    2,
+    'the same revision is not re-woken',
+  )
+  await drain('app-a', programA)
+
+  // Restart: both bindings and cursors restore; no replay of the processed revision.
+  await first.manager.stop()
+  const secondHost = createFakeHost()
+  secondHost.createAgent('session-a')
+  secondHost.createAgent('session-b')
+  const second = await createTestManager({ host: secondHost, stateFile: first.stateFile })
+  t.after(() => second.manager.stop())
+  await second.manager.start()
+  await waitFor(
+    () => second.manager.engines.size === 2,
+    { label: 'two engines after restart', timeoutMs: 8000 },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  assert.equal(secondHost.followups.length, 0, 'processed revisions are not replayed')
+  await push('app-b', programB, { title: 'v2-after-restart', payload: { round: 2 } })
+  await waitFor(
+    () => secondHost.followups.filter((entry) => entry.agentId === 'session-b').length === 1,
+    { label: 'B wake after restart', timeoutMs: 8000 },
+  )
+  assert.equal(
+    secondHost.followups.filter((entry) => entry.agentId === 'session-a').length,
+    0,
+    'A is not woken by app-b',
+  )
+  await drain('app-b', programB)
+
+  // Token-ref validation fails closed.
+  const invalid = await second.manager.bind({
+    sessionId: 'session-c',
+    descriptor: { inboxId: 'app-a', adapterTokenRef: 'relative.token' },
   })
-  try {
-    await created.adapter.start()
-    assert.equal(created.adapter.configError?.code, 'AUTH_FAILED')
-    await delay(300)
-    assert.equal(host.followups.length, 0)
-    assert.match(created.adapter.statusText(), /CONFIG ERROR: AUTH_FAILED/)
-  } finally {
-    await created.adapter.stop()
-  }
+  assert.equal(invalid.ok, false)
+  assert.match(invalid.message, /TOKEN_REF_NOT_ABSOLUTE/)
+
+  // Disposing one session clears only its binding/occupancy.
+  secondHost.dispose(secondHost.agents.get('session-a'))
+  await waitFor(
+    async () => {
+      const occupancy = await call('/v1/inboxes/app-a/occupancy', { token: wakeA })
+      return occupancy.json.occupied === false
+    },
+    { label: 'app-a occupancy cleared', timeoutMs: 8000 },
+  )
+  assert.equal(second.manager.bindingFor('session-b') !== undefined, true)
+  assert.equal(second.manager.engines.has('session-b'), true, 'B engine stays alive')
+
+  await second.manager.unbind('session-b')
+  const occupancyBAfter = await call('/v1/inboxes/app-b/occupancy', { token: wakeB })
+  assert.equal(occupancyBAfter.json.occupied, false)
+  await drain('app-a', programA)
+  await drain('app-b', programB)
 })

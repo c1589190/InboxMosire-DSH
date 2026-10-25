@@ -1,150 +1,113 @@
-# Delivery report — InboxMosire → DSH wake adapter
+# Delivery report — InboxMosire → DSH v2 multi-binding adapter
 
-Scope: `/home/cna/InboxMosire-DSH` (adapter only). The InboxMosire backend and
-its v1 HTTP/SSE/MCP contract were not modified. No backend logic was copied and
-the adapter never calls MCP.
+Scope: `/home/cna/InboxMosire-DSH` only. The backend, its HTTP/SSE/MCP contract,
+and the program side were not modified. No backend logic was copied; the adapter
+never claims, completes, pushes, reads item content, or speaks MCP.
 
----
-
-## 1. Changed files and key locations
+## 1. Files and key locations
 
 | File | Role |
 |---|---|
-| `index.js` | Host plugin entry: config/state assembly, host event wiring, `/inbox` registration. `apply()` at `index.js:144`, `createAdapter()` at `:52`, `wireHostEvents()` at `:36`. |
-| `lib/adapter.js` | Wake state machine. `InboxAdapter` at `:76`; startup (`:166`), binding (`:228`, `:269`), lifecycle (`:353`, `:381`, `:400`, `:436`, `:447`), decision (`:503`), delivery (`:588`), turn-end re-evaluation (`:682`), SSE frame intake (`:724`), debounce (`:746`), connect/reconnect (`:791`, `:850`), auth/config failure (`:913`, `:956`), diagnostics (`:1003`, `:1040`). |
-| `lib/inbox-client.js` | Read-only v1 client. `getStatus()` (`:131`), `streamEvents()` SSE parser/heartbeat/cursor, error classification (`:26`, `:89`). |
-| `lib/state.js` | Atomic, versioned state. `emptyState()` (`:24`), `normalizeState()` migration/refusal (`:82`), `StateStore` (`:141`). |
-| `lib/template.js` | Fixed wake template (`:59`), idempotency key (`:87`), message id (`:99`), immutable `UserMessage` (`:117`), channel sanitization (`:38`). |
-| `lib/config.js` | Precedence and validation (`:156`), token loading (`:329`), redaction (`:360`). |
-| `lib/commands.js` | `/inbox status\|bind\|unbind\|pause\|resume\|retry` (`:29`, `:81`); status now reports the caller and `isBound`. |
-| `tools.js` | Model-facing `inbox_adapter_status`, `inbox_adapter_bind`, `inbox_adapter_unbind`; a separate loader row that delegates to the `/inbox` command. |
-| `lib/log.js` | Redacting JSONL logger with rotation and an in-memory tail (`:27`). |
-| `cordis.patch.yml` | Bundle patch that inserts the `inbox-mosire-adapter` row. |
-| `package.json` / `locale/*.json` / `icon.svg` | Bundle manifest, display metadata, artwork. |
-| `test/…` | 66 tests: unit, fake host + fake server, live backend, tool surface, manifest. |
-| `test/helpers/mcp.mjs`, `scripts/acceptance-acp.mjs` | Acceptance harness (Agent stand-in and real ACP host driver). |
-| `scripts/privacy-scan.mjs` | Credential/content leak scan. |
-| `docs/HOST-CAPABILITIES.md`, `docs/ACCEPTANCE.md` | Host probe and acceptance evidence. |
+| `index.js` | Engine row: config, v2 state load/migration, manager creation, host event wiring, `/inbox` command (`apply` :111, `createManager` :61, `wireHostEvents` :33). |
+| `lib/manager.js` | Multi-binding manager: `BindingManager` :24, `start` :59, `bind` :90, `unbind` :177, `retry` :194, `startBinding` :219, `stopBinding` :307, occupancy :327/:360, lifecycle :401/:451/:465, status :543/:565. |
+| `lib/bindings.js` | Descriptor validation and token refs: `tokenRefPath` :45, `loadBindingToken`, `validateDescriptor` :130. |
+| `lib/state.js` | v2 host state: `emptyHostState` :290, `normalizeBinding` :346, `normalizeHostState` (v1→v2) :434; generic `StateStore.loadDocument`. |
+| `lib/adapter.js` | Per-binding engine (unchanged wake machine): SSE, status, followup, dedupe, backoff, lifecycle. |
+| `lib/inbox-client.js` | Read-only client + occupancy `PUT/GET/DELETE`; SSE parser/heartbeat/reconnect. |
+| `lib/template.js` | Fixed v2 wake template (“请使用你的程序 MCP 的 inbox_list…”). |
+| `lib/commands.js` | `/inbox status\|bind\|unbind\|retry` over the manager. |
+| `tools.js` | `inbox_adapter_status\|bind\|unbind`; descriptor/tokenRef arguments. |
+| `lib/runtime.js` | In-process manager bridge between the engine row and the tool row. |
+| `test/manager.test.mjs` | 10 tests: migration, isolation, occupancy, rebind, dispose, unbind, cold resume, restart. |
+| `test/real-backend.test.mjs` | Live app-a/app-b two-session isolation, occupancy, restart, tokenRef failure. |
+| `scripts/acceptance-acp.mjs` | Real DSH host, two ACP sessions, tool-driven binding. |
+| `docs/ACCEPTANCE.md` | Full v2 evidence. |
 
-## 2. DSH host capability conclusions
+## 2. Host capabilities used
 
-Verified against `@deepseek-ai/*@0.2.1-rc.2` installed packages via the Host
-Inspect providers and the package type declarations. Full citations in
+Same Host surface as v1, plus tool registration; full citations in
 `docs/HOST-CAPABILITIES.md`.
 
-1. **Authoritative session id** — `agent.id: SessionId` / `agent.session.id`
-   (`runtime-types.d.ts:139-147`, `types.d.ts:11`).
-2. **Turn start/end/idle** — `agent/status` `{agent, status: 'idle'|'running'}`
-   (`runtime-types.d.ts:252`, `:90`), plus `agent/turn-stopping` (`:387`) and
-   the durable `session/event` `turn/end` (`dsh-session/.../index.d.ts:61`).
-3. **Resume/archive/delete** — `agent/created` with `source: startup|resume|clear|compact`
-   (`:227`), `agent/disposed` (`:240`), `workspace/session-stop`
-   (`dsh-workspace/.../index.d.ts:110`).
-4. **Wake entry** — `agent.followup(message: UserMessage): void`
-   (`runtime-types.d.ts:192`), the exact API the contract asks for; precedent in
-   `dsh-schedule/lib/index.js:1586-1596`.
-5. **Idempotency key** — **not provided by the host.** The adapter implements
-   `inbox:<id>:revision:<n>:session:<ref>` itself and gates on persisted
-   watermarks.
-6. **State location** — a host-wide binding does not fit a per-session
-   `storageDomain`, so the adapter keeps a dedicated atomic document under
-   `$DSH_HOME/inbox-mosire/`.
+- `agent.followup()` (`runtime-types.d.ts:192`) — one call per due wake.
+- `agent/status` (`:252`), `session/event` `turn/end`, `agent/created` (`:227`),
+  `agent/disposed` (`:240`), `workspace/session-stop`.
+- `agent.id` / `agent.session.id` for authoritative binding keys.
+- `ctx.tools.register()` (`dsh-tools` `ToolDefinition`, `:115-128`, `agent` at
+  `:229`) for the three adapter tools.
+- Occupancy is a backend endpoint; the adapter calls it, the host is unaware.
 
-**Conclusion: not degraded.** No acceptance item is blocked by a missing host
-capability; the only gap (host-native followup idempotency) is covered by
-adapter state.
+## 3. v1 → v2 state migration
 
-## 3. Persisted state and migration
+- The document is now `{version:2, bindings:{sessionRef: binding}, legacyV1}`.
+- A v1 document is preserved verbatim under `legacyV1`; if it names a session and
+  a usable legacy token reference exists (configured `tokenFile`), that session
+  becomes a v2 binding with its cursor/watermark.
+- A v1 binding without a usable token reference is kept and marked
+  `blocked: {code:'TOKEN_REF_MISSING'}` — visible in status, never silently
+  dropped, never woken.
+- Newer versions are refused; corrupt JSON is refused without overwriting.
+- Existing v2 bindings are validated individually; an invalid one is kept
+  `blocked` and does not affect the others.
 
-- Location: `$DSH_HOME/inbox-mosire/state.json` (default
-  `/home/cna/.dsh/inbox-mosire/state.json`), atomic `tmp` + `rename`, mode 0600.
-- Shape: `version`, `inboxId`, `sessionRef`, `channels`, `lastEventId`,
-  `lastObservedRevision`, `lastWokenRevision`, `enabled`, `lastStatus`,
-  `lastWake`, `pendingWake`, `wake {attempts, stalls, nextWakeAllowedAt}`,
-  `health {sse, reconnects, lastError, configError, session}`.
-- Migration: unversioned/older documents are normalized field by field; a
-  document whose `inboxId` differs, whose JSON is corrupt, or whose `version` is
-  newer is **refused without being overwritten** (`lib/state.js:82-139`,
-  `:141-196`).
-- `pendingWake` recovery treats an interrupted delivery as delivered
-  (at-most-once), matching the contract's "same revision never wakes twice".
+## 4. Bind / unbind / status and the command
 
-## 4. SSE and lifecycle implementation
+- `inbox_adapter_bind(sessionId?, inboxId, adapterTokenRef, apiBaseUrl?, channels?, label?, descriptor?)`
+  loads the token **before** persisting; an unreadable/relative ref fails the
+  bind and leaves the previous binding intact. Same-inbox re-bind keeps the
+  cursor/watermark; a different inbox resets that session only.
+- `inbox_adapter_unbind(sessionId?)` stops only that engine, clears its
+  occupancy, and leaves other bindings untouched.
+- `inbox_adapter_status()` returns the caller's binding (inbox, cursor, SSE,
+  occupancy, last wake, config error) plus summaries of the others. No token.
+- `/inbox status|bind <descriptor.json | inboxId tokenRef [channels]>|unbind|retry`.
 
-Startup: load state → validate binding → `GET status` → at most one wake →
-open SSE with `Last-Event-ID` (only after the status read, because a connect
-without a cursor starts at the tip).
+## 5. Per-binding SSE and wake isolation
 
-- Frames are parsed as a real SSE stream (multi-line `data:`, comments,
-  `id:`, `event:`), with a heartbeat watchdog. Events are **invalidations
-  only**; every decision re-reads `status`.
-- Burst events are debounced (300 ms default) into one decision; decisions are
-  serialized through one promise chain.
-- Reconnect uses exponential backoff with jitter and keeps the last successful
-  event id. `INVALID_CURSOR` drops the cursor and reconnects from the tip.
-- 401/403/404 → stop SSE, record `configError`, no automatic wakes;
-  `/inbox retry` clears it.
-- `agent/status` idle and `session/event` `turn/end` both trigger the turn-end
-  reconciliation; `agent/created` rebinds/reconnects; `agent/disposed` and
-  `workspace/session-stop` stop delivery immediately and mark the binding
-  not-live/archived.
-- One unfinished wake at a time (`wakeInFlight` + 10-minute guard), one wake per
-  revision (`lastWokenRevision` + `lastWake.key`), no-progress exponential
-  backoff, and fail-closed behavior when the session is unknown or cold.
+- One `InboxAdapter` engine and one `InboxClient` per binding; one SSE stream,
+  one cursor (`lastEventId`), one revision pair, one `lastWake`/`pendingWake`,
+  one backoff ladder, one `wakeInFlight` guard.
+- Startup per binding: `GET status` → at most one wake → SSE with that binding's
+  `Last-Event-ID`; reconnect and `INVALID_CURSOR` recovery are per binding.
+- `agent/status` and `session/event` are routed by session id to the owning
+  engine; `agent/disposed`/`session-stop` stop only that engine and clear its
+  occupancy.
+- Wake template is unchanged in shape; the Mode A sentence now points at the
+  program MCP.
 
-## 5. Real acceptance commands and results
+## 6. Live acceptance
 
 | Command | Result |
 |---|---|
-| `node --test` | **66/66 pass**, exit 0 |
-| `node --test test/real-backend.test.mjs` | **2/2 pass** against the live daemon on `smoke` (empty board, one wake, claim/complete, dedupe, offline push + restart replay, claim 2 / complete 1 / remaining wake, bad token) |
-| `node scripts/acceptance-acp.mjs` | **all assertions passed** on a real DSH host: 2 pushes during an 8 s active turn, one wake 508 ms after turn end (seq 29 > turn/end seq 24), Agent called `inbox_list` → `inbox_claim` → `inbox_complete`, board drained in 4.3 s, exactly one `inbox-mosire` wake message in the durable log, archived session push produced no wake |
-| `node scripts/privacy-scan.mjs` | **PASS** across 34 repo files, adapter state/config/log, DSH host logs, and the full decompressed content of 875 session logs (0 credential hits) plus 3 wake messages |
-| `plugin_manager install_bundle /home/cna/InboxMosire-DSH` | `application: applied`, `warnings: []`; after the tool-row reinstall the live adapter restored `绑定已加载 {cursor:118}` and `SSE 已连接 {cursor:118}` |
-| live tool calls | `inbox_adapter_status` → `isBound=true`; `inbox_adapter_bind` → 已绑定; `mcp__inbox-mosire__inbox_list` → `{count:0}` |
-| live native-tool loop | `inbox_push` (revision 4) → turn-end wake at 11:46:47 → `inbox_list` / `inbox_claim` / `inbox_complete` for the self-task **and** a second curl-pushed item; board back to `available=0`, `revision=9`, no extra wake |
-| `mcp_connector_configure` | `inbox-mosire` → `http://127.0.0.1:18766/mcp`, connected; 7 `inbox_*` tools cached and injected (`mcp__inbox-mosire__*`) |
+| `node --test` | **73/73 pass** |
+| `node --test test/real-backend.test.mjs` | **1/1 pass** — two sessions, two inboxes, isolated wakes, occupancy, restart, tokenRef failure |
+| `node scripts/acceptance-acp.mjs` | **all assertions passed** — S1→app-a, S2→app-b via the model tool; pushes wake only the matching session; archive S1 clears only app-a; S2 wakes again; session logs contain only their own inbox wakes; boards left clean |
+| `node scripts/privacy-scan.mjs` | **PASS** — 40 repo files, adapter artifacts, 6 host logs, 872 session transcripts, 2 wake messages, 0 credential hits |
 
-Full logs and exact output: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-acp/`
-(`acceptance.txt`, `adapter.log`, `state.json`, `dsh.stderr.log`), the durable
-session log under `~/.dsh/sessions/--tmp-inbox-mosire-acp-workspace--/`, and
-`~/.dsh/inbox-mosire/{state.json,adapter.log}`.
+Raw evidence: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-acp/`, the ACP session
+logs under `~/.dsh/sessions/--tmp-inbox-mosire-acp-workspace-s{1,2}--/`.
 
-## 6. Unverified, degraded, or blocked
+## 7. Unverified, degraded, blocked
 
-- **Not degraded.** No contract item is blocked.
-- Wakes require a **live** agent. A cold session is woken on resume, never
-  resurrected by the adapter; this is a deliberate fail-closed choice.
-- The `/inbox` command's visual appearance in the Web composer was not verified
-  with browser control. Its registration and behavior are covered by the plugin
-  entry test and the live profile load.
-- The **Web profile** is now fully wired: the engine is bound to the live
-  session `session-5d2eb5b6-…` with an open SSE connection, the native
-  `inbox_adapter_*` tools are registered, and the InboxMosire MCP server is
-  configured so `inbox_list`/`inbox_claim`/`inbox_complete` are available as
-  `mcp__inbox-mosire__*`.
-- Exposing `inbox_adapter_bind`/`unbind` to the model was an explicit operator
-  choice; the same actions remain available to a human through `/inbox`.
-- The real-host run used the `inbox-acp` test profile (shipped ACP template plus
-  `test/acp-test.patch.yml`) rather than the Web UI, because ACP provides a
-  scriptable, standard control surface and a real Agent/Session/turn lifecycle.
-- Delivery is at-most-once per revision: a crash in the window between persisting
-  intent and calling `followup()` loses that one wake instead of duplicating it.
+- **Item 11 is partial**: no program-owned MCP server is running on this
+  machine. The adapter correctly never claims/completes; claim/complete was
+  exercised through the program's own HTTP client surface with the program
+  tokens (the same calls `InboxClientMcpTools` wraps), not through an MCP
+  transport.
+- The **web profile** still runs the pre-upgrade v1 module generation in its
+  live process. The linked package, patch, and state load v2 on the next DSH
+  restart. The central InboxMosire MCP connection was disconnected for Mode A.
+- Wakes require a live agent; cold sessions start on resume.
+- Delivery is at-most-once per revision; a crash between persisting intent and
+  `followup()` loses one wake rather than duplicating it.
+- Occupancy is advisory; a token without `inbox:occupy` logs a warning and wakes
+  continue.
 
-## 7. Token leakage check
+## 8. Token leakage check
 
-`node scripts/privacy-scan.mjs` reads all five local credential files and scans:
-
-- every repository file (34),
-- the adapter state, config, and log (3),
-- the Web profile host logs (5),
-- the **complete decompressed content** of every session log on this machine
-  (875) for credential values,
-- every adapter wake message (3) for credential *and* notification-content
-  markers.
-
-**Result: PASS.** No credential value appears anywhere in the scanned
-transcripts or artifacts, and no synthetic title/payload marker appears in an
-adapter artifact or wake message. The token is loaded at start, used only in the
-`Authorization` header, redacted from every log line, and never written to
-state, the wake message, a URL, or an error string.
+`scripts/privacy-scan.mjs` reads all five local credential files and scans the
+repository, the adapter state/config/log, DSH host logs, the complete
+decompressed content of every session log (872), and every adapter wake message.
+Result: **PASS**, 0 credential hits. Per-binding tokens are loaded from their
+`file:` refs, used only in the `Authorization` header, registered with the
+redacting logger, and never written to state, logs, wake messages, or the
+repository.

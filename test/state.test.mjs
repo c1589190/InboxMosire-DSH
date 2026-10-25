@@ -14,7 +14,7 @@ const EXPECTED = { inboxId: 'main', channels: ['ticket'] }
  */
 async function tempState(t) {
   const dir = await mkdtemp(join(tmpdir(), 'inbox-state-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))
   return { dir, file: join(dir, 'nested', 'state.json') }
 }
 

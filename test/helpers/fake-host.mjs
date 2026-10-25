@@ -3,15 +3,16 @@
  * in-memory agent registry, `agent/status` transitions, `/inbox` commands, and
  * a redacting logger that keeps every line for privacy assertions.
  */
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InboxAdapter } from '../../lib/adapter.js'
 import { resolveConfig } from '../../lib/config.js'
-import { wireHostEvents } from '../../index.js'
+import { BindingManager } from '../../lib/manager.js'
+import { wireEngineEvents } from '../../index.js'
 import { InboxClient } from '../../lib/inbox-client.js'
 import { createLogger } from '../../lib/log.js'
-import { StateStore } from '../../lib/state.js'
+import { StateStore, normalizeHostState } from '../../lib/state.js'
 
 /**
  * Create a fake host.
@@ -297,6 +298,88 @@ export async function createTestAdapter({
     },
     tokenSource: { kind: 'inline' },
   })
-  wireHostEvents(host.ctx, adapter)
+  wireEngineEvents(host.ctx, adapter)
   return { adapter, store, logger, config: resolved.value, loaded, stateFile: file }
+}
+
+/**
+ * Build a v2 binding descriptor pointing at a fake inbox and a 0600 token file.
+ * @param {string} directory - directory for the token file.
+ * @param {Record<string, any>} server - fake inbox handle.
+ * @param {object} [options] - descriptor overrides.
+ * @returns {Promise<Record<string, any>>} descriptor.
+ */
+export async function writeBindingDescriptor(directory, server, options = {}) {
+  const tokenFile = join(directory, `${options.name ?? server.inbox}-wake.token`)
+  await writeFile(tokenFile, `${server.token}\n`, { mode: 0o600 })
+  return {
+    inboxId: server.inbox,
+    apiBaseUrl: server.url,
+    adapterTokenRef: `file:${tokenFile}`,
+    channels: [],
+    label: options.label ?? `test-${server.inbox}`,
+    ...options.descriptor,
+  }
+}
+
+/**
+ * Build a v2 BindingManager on a temp state file.
+ * @param {object} options - construction.
+ * @param {Record<string, any>} options.host - fake host.
+ * @param {Record<string, any>} [options.overrides] - config overrides.
+ * @param {string} [options.stateFile] - reuse a state path.
+ * @param {Record<string, any>} [options.state] - pre-built v2 state.
+ * @returns {Promise<Record<string, any>>} manager handles.
+ */
+export async function createTestManager({ host, overrides = {}, stateFile, state }) {
+  const dir = stateFile ? null : await mkdtemp(join(tmpdir(), 'inbox-manager-'))
+  const file = stateFile ?? join(dir, 'state.json')
+  const resolved = resolveConfig(
+    {
+      apiUrl: 'http://127.0.0.1:1',
+      inboxId: 'main',
+      channels: [],
+      stateFile: file,
+      logFile: `${file}.log`,
+      debounceMs: 20,
+      heartbeatTimeoutSeconds: 5,
+      reconnectBaseMs: 50,
+      reconnectMaxMs: 200,
+      wakeBackoffBaseMs: 100,
+      wakeBackoffMaxMs: 400,
+      requestTimeoutMs: 2000,
+      ...overrides,
+    },
+    {},
+    {},
+  )
+  const logger = createLogger({ base: host.baseLogger, file: resolved.value.logFile, tailSize: 300 })
+  const store = new StateStore({ file, logger, debounceMs: 5 })
+  const loaded = state
+    ? { state, existed: true, migrated: false, warnings: [] }
+    : await store.loadDocument(normalizeHostState, {
+        legacyDefaults: {
+          inboxId: resolved.value.inboxId,
+          apiBaseUrl: resolved.value.apiUrl,
+          adapterTokenRef: resolved.value.tokenFile
+            ? `file:${resolved.value.tokenFile}`
+            : undefined,
+        },
+      })
+  const manager = new BindingManager({
+    config: resolved.value,
+    logger,
+    store,
+    state: loaded.state,
+    host: {
+      getAgent: (id) => host.ctx.agents.get(id),
+      listAgents: () => host.ctx.agents.list(),
+      isIdle: (agent) => agent?.status === 'idle',
+      followup: (agent, message) => agent.followup(message),
+      now: host.now,
+    },
+  })
+  const { wireHostEvents } = await import('../../index.js')
+  wireHostEvents(host.ctx, manager)
+  return { manager, store, logger, config: resolved.value, stateFile: file, loaded }
 }

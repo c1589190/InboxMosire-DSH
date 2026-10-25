@@ -58,7 +58,7 @@ test('the plugin entry exports the Host plugin surface', async () => {
   assert.deepEqual(entry.inject, ['agents'])
   const tools = await import(join(ROOT, 'tools.js'))
   assert.equal(typeof tools.apply, 'function')
-  assert.deepEqual(tools.inject, ['commands', 'tools'])
+  assert.deepEqual(tools.inject, ['tools'])
   assert.equal(entry.Config, undefined, 'runtime validation replaces a loader schema')
 })
 
