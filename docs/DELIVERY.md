@@ -102,6 +102,7 @@ without a cursor starts at the tip).
 | `node scripts/privacy-scan.mjs` | **PASS** across 34 repo files, adapter state/config/log, DSH host logs, and the full decompressed content of 875 session logs (0 credential hits) plus 3 wake messages |
 | `plugin_manager install_bundle /home/cna/InboxMosire-DSH` | `application: applied`, `warnings: []`; after the tool-row reinstall the live adapter restored `绑定已加载 {cursor:118}` and `SSE 已连接 {cursor:118}` |
 | live tool calls | `inbox_adapter_status` → `isBound=true`; `inbox_adapter_bind` → 已绑定; `mcp__inbox-mosire__inbox_list` → `{count:0}` |
+| live native-tool loop | `inbox_push` (revision 4) → turn-end wake at 11:46:47 → `inbox_list` / `inbox_claim` / `inbox_complete` for the self-task **and** a second curl-pushed item; board back to `available=0`, `revision=9`, no extra wake |
 | `mcp_connector_configure` | `inbox-mosire` → `http://127.0.0.1:18766/mcp`, connected; 7 `inbox_*` tools cached and injected (`mcp__inbox-mosire__*`) |
 
 Full logs and exact output: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-acp/`

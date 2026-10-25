@@ -168,6 +168,46 @@ arms it. The optional MCP registration of `inbox_list`/`inbox_claim`/
 `inbox_complete` is a separate DSH-side action and is not performed by the
 adapter.
 
+### 7. Live native-tool loop on `main` (2026-10-25 11:46–11:47)
+
+With the adapter bound to the live session, the MCP server registered, and the
+native `inbox_adapter_*` tools loaded, the full loop was driven once more on the
+production board — this time with tools only, no curl on the Agent side:
+
+```console
+mcp__inbox-mosire__inbox_push(channel=ticket, kind=self-task, priority=5)
+→ {"itemId":"itm_fe05ba6e-…","revision":4,"duplicate":false}
+
+# …the turn stayed active; the adapter logged no wake until turn end…
+adapter 11:46:47.978 已投递唤醒 {revision:4, available:1, channels:[ticket],
+                               reason:"turn-end-event", messageId:"msg_inbox_369db3f2…"}
+
+mcp__inbox-mosire__inbox_list(inbox=main)
+→ count=1 (itm_fe05ba6e-…, self-task, priority 5)
+mcp__inbox-mosire__inbox_claim(itemIds=[itm_fe05ba6e-…])
+→ claimed 1, available 1             # a second item appeared mid-turn
+mcp__inbox-mosire__inbox_complete(claimToken=clm_…)
+→ completed 1, revision 7, available 1
+
+mcp__inbox-mosire__inbox_list(inbox=main)
+→ count=1 (itm_595840a3-…, title "工单更新", created 11:46:51.004Z)
+mcp__inbox-mosire__inbox_claim + inbox_complete
+→ revision 9, available 0
+
+final board: revision=9 available=0 claimed=0
+adapter: sse=connected, lastEventId=151, lastWokenRevision=4, attempts=2, stalls=0
+session log: 2 inbox-mosire wake messages, last seq=1644
+  "inbox=main revision=4 available=1 channels=[ticket]"
+  title/payload/itemId/claimToken markers: none
+```
+
+The second item was pushed (with the curl command from the README/answer) while
+the wake turn was already running. Because an active turn is never interrupted,
+it produced no second wake; the Agent listed and processed it in the same turn.
+Had the turn ended with it still available, the adapter would have woken the
+session once more (`revision 5 > lastWokenRevision 4`) — both paths are the
+designed behavior.
+
 ## The ten acceptance items
 
 | # | Requirement | Result | Evidence |
@@ -181,7 +221,7 @@ adapter.
 | 7 | An archived session receives no wake | **pass** | `adapter.test.mjs` dispose/resume; ACP real `session/close` followed by a push: delivery stopped, no wake, the item stayed on the board |
 | 8 | Cursor / `lastWokenRevision` / binding survive a DSH restart | **pass** | `adapter.test.mjs` restart tests (including interrupted `pendingWake` at-most-once); real-backend restart test |
 | 9 | No payload/title/token in adapter logs or wake messages | **pass** | `node scripts/privacy-scan.mjs`; privacy tests in `adapter.test.mjs` and `real-backend.test.mjs`; ACP assertions |
-| 10 | Full loop: idle → wake → multi-claim → complete → continue/silence | **pass** | ACP transcript: wake → `inbox_list` → `inbox_claim` → `inbox_complete` → board empty → silent; plus the live Web session loop on `main` (wake at 11:36:59, claim/complete at 11:37:13) |
+| 10 | Full loop: idle → wake → multi-claim → complete → continue/silence | **pass** | ACP transcript: wake → `inbox_list` → `inbox_claim` → `inbox_complete` → board empty → silent; the live Web session loop on `main` with curl (wake 11:36:59, claim/complete 11:37:13); and the native-tool loop in §7 (wake 11:46:47, two items, board back to 0) |
 
 ## Notes and limits
 
