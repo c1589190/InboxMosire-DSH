@@ -251,12 +251,21 @@ the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
 - if the target session has no program-owned MCP business tool, the strip shows
   `程序 MCP 未挂载` / `program MCP missing` instead of implying the wake is
   actionable;
-- when `programMcpConnectorKey` is configured, the strip has a **挂载 MCP /
-  卸载 MCP** button. It calls the installed `dsh-mcp-connector` trusted
-  same-origin API (`setEnabled`), then refreshes the panel. The call is
-  single-flight and aborts after 15s, so rapid clicks cannot leave the button
-  stuck; the connector key and Bearer credential stay in the Host/local
-  connector store, and no token is sent to the browser or repository;
+- when `programMcpConnectorKey` is configured, the strip has a manual
+  **挂载 / 卸载** button:
+  - **卸载** disables the configured program MCP and suspends the current Inbox
+    binding: SSE, cursor activity, occupancy, and wakes stop; the row changes to
+    `Inbox 已卸载` and keeps a **挂载** control;
+  - **挂载** re-enables the MCP and resumes the same Inbox descriptor;
+  - if the binding is active but its MCP is missing, the button mounts MCP only.
+  A suspended binding stays disabled across Host restarts until remounted;
+  `enabled=false` is persisted. The connector toggle applies to that
+  connector's configured scope, so it can affect other sessions in the same
+  workspace/global scope;
+- the toggle is single-flight and aborts after 15s, so rapid clicks cannot
+  leave the button stuck; the connector key and Bearer credential stay in the
+  Host/local connector store, and no token is sent to the browser or
+  repository;
 - the client half is served by DSH's client-module system. Adding a `dsh.client`
   declaration to an already-running Host is picked up only after a DSH Web Host
   restart (the client module graph is cached at boot); existing sessions and

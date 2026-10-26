@@ -99,6 +99,8 @@ test('the client bundle parses as a standalone module and keeps copy bounded', a
   assert.ok(text.includes("id: '@mosire/dsh-inbox-mosire'"))
   assert.ok(text.includes("ctx.connection.rpc.call("))
   assert.ok(text.includes("/mcp-connector/api"))
+  assert.ok(text.includes("setInbox('suspend')"))
+  assert.ok(text.includes("setInbox('resume')"))
   assert.ok(text.includes('AbortController'))
   assert.ok(text.includes('15_000'))
   assert.ok(!text.includes('Authorization'))
@@ -186,7 +188,30 @@ test('the dock component renders the bound inbox count and hides when unbound', 
   ]
   cursor = 0
   const mounted = component({ sessionId: 'session-a', t: (key) => key })
-  assert.ok(JSON.stringify(mounted).includes('panel.mcp.unmount'))
+  assert.ok(JSON.stringify(mounted).includes('panel.unmountAll'))
+
+  states[0] = [
+    {
+      data: {
+        bound: true,
+        inboxId: 'app-a',
+        available: null,
+        sse: 'idle',
+        enabled: false,
+        programMcp: 'missing',
+        programMcpConnectorKey: 'custom-iibot',
+      },
+      error: false,
+    },
+    () => {},
+  ]
+  cursor = 0
+  const unmounted = component({ sessionId: 'session-a', t: (key) => key })
+  const unmountedText = JSON.stringify(unmounted)
+  assert.ok(unmountedText.includes('panel.status.unloaded'))
+  assert.ok(unmountedText.includes('panel.mountAll'))
+  const unmountedBar = unmounted.children.find((child) => child?.props?.className === 'ims-bar')
+  assert.equal(unmountedBar.children.some((child) => child?.props?.className === 'ims-count'), false)
 
   states[0] = [{ data: { bound: false }, error: false }, () => {}]
   cursor = 0

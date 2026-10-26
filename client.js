@@ -15,11 +15,14 @@ window.__ModuleLoader__.load({
       'panel.status.connecting': '连接中',
       'panel.status.offline': '离线',
       'panel.status.disabled': '已停用',
+      'panel.status.unloaded': 'Inbox 已卸载',
       'panel.status.no-mcp': '程序 MCP 未挂载',
       'panel.status.error': '读取失败',
       'panel.refresh': '刷新通知数',
       'panel.mcp.mount': '挂载 MCP',
       'panel.mcp.unmount': '卸载 MCP',
+      'panel.mountAll': '挂载',
+      'panel.unmountAll': '卸载',
       'panel.mcp.working': '处理中…',
       'panel.mcp.failed': 'MCP 操作失败',
     }
@@ -32,11 +35,14 @@ window.__ModuleLoader__.load({
       'panel.status.connecting': 'connecting',
       'panel.status.offline': 'offline',
       'panel.status.disabled': 'disabled',
+      'panel.status.unloaded': 'Inbox unmounted',
       'panel.status.no-mcp': 'program MCP missing',
       'panel.status.error': 'read failed',
       'panel.refresh': 'Refresh notification count',
       'panel.mcp.mount': 'Mount MCP',
       'panel.mcp.unmount': 'Unmount MCP',
+      'panel.mountAll': 'Mount',
+      'panel.unmountAll': 'Unmount',
       'panel.mcp.working': 'working…',
       'panel.mcp.failed': 'MCP action failed',
     }
@@ -124,21 +130,29 @@ window.__ModuleLoader__.load({
 
         const connectorKey =
           typeof data.programMcpConnectorKey === 'string' ? data.programMcpConnectorKey : ''
+        const inboxActive = data.enabled !== false
         const mcpMounted = data.programMcp === 'available'
-        const toggleMcp = async () => {
-          if (!connectorKey || busyRef.current) return
+        const actionLabel = !inboxActive
+          ? translate('panel.mountAll')
+          : connectorKey && !mcpMounted
+            ? translate('panel.mcp.mount')
+            : translate('panel.unmountAll')
+        const toggleInbox = async () => {
+          if (busyRef.current) return
           busyRef.current = true
           setBusy(true)
           setMcpError(false)
           const controller = new AbortController()
           const timer = setTimeout(() => controller.abort(), 15_000)
-          try {
+          let failed = false
+          const setConnector = async (enabled) => {
+            if (!connectorKey) return
             const response = await window.fetch('/mcp-connector/api', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({
                 method: 'setEnabled',
-                params: { key: connectorKey, enabled: !mcpMounted },
+                params: { key: connectorKey, enabled },
               }),
               signal: controller.signal,
             })
@@ -151,16 +165,95 @@ window.__ModuleLoader__.load({
             if (!response.ok || body?.ok === false) {
               throw new Error(body?.message ?? `HTTP ${response.status}`)
             }
-            // Do not wait for the tool registry before unlocking the button.
-            setSnapshot((previous) => previous.data
-              ? {
-                  ...previous,
-                  data: {
-                    ...previous.data,
-                    programMcp: mcpMounted ? 'missing' : 'available',
-                  },
-                }
-              : previous)
+          }
+          const setInbox = async (endpoint) => {
+            const result = await ctx.connection.rpc.call(
+              '/inbox-mosire',
+              endpoint,
+              { sessionId },
+              controller.signal,
+            )
+            if (!result?.ok) {
+              throw new Error(result?.error?.message ?? `${endpoint} failed`)
+            }
+            return result.value
+          }
+          try {
+            if (!inboxActive) {
+              try {
+                await setConnector(true)
+              } catch {
+                failed = true
+              }
+              try {
+                await setInbox('resume')
+              } catch {
+                failed = true
+              }
+              setSnapshot((previous) => previous.data
+                ? {
+                    ...previous,
+                    data: {
+                      ...previous.data,
+                      enabled: true,
+                      programMcp: connectorKey ? 'available' : previous.data.programMcp,
+                    },
+                  }
+                : previous)
+            } else if (mcpMounted) {
+              try {
+                await setConnector(false)
+              } catch {
+                failed = true
+              }
+              try {
+                await setInbox('suspend')
+              } catch {
+                failed = true
+              }
+              setSnapshot((previous) => previous.data
+                ? {
+                    ...previous,
+                    data: {
+                      ...previous.data,
+                      enabled: false,
+                      available: null,
+                      claimed: null,
+                      programMcp: connectorKey ? 'missing' : previous.data.programMcp,
+                    },
+                  }
+                : previous)
+            } else if (connectorKey) {
+              try {
+                await setConnector(true)
+              } catch {
+                failed = true
+              }
+              setSnapshot((previous) => previous.data
+                ? {
+                    ...previous,
+                    data: { ...previous.data, programMcp: 'available' },
+                  }
+                : previous)
+            } else {
+              try {
+                await setInbox('suspend')
+              } catch {
+                failed = true
+              }
+              setSnapshot((previous) => previous.data
+                ? {
+                    ...previous,
+                    data: {
+                      ...previous.data,
+                      enabled: false,
+                      available: null,
+                      claimed: null,
+                    },
+                  }
+                : previous)
+            }
+            if (failed) setMcpError(true)
             setTimeout(() => setRefreshKey((value) => value + 1), 600)
           } catch {
             setMcpError(true)
@@ -180,6 +273,9 @@ window.__ModuleLoader__.load({
         } else if (mcpError) {
           tone = 'error'
           status = translate('panel.mcp.failed')
+        } else if (!inboxActive) {
+          tone = 'offline'
+          status = translate('panel.status.unloaded')
         } else if (data.programMcp === 'missing') {
           tone = 'error'
           status = translate('panel.status.no-mcp')
@@ -240,25 +336,25 @@ window.__ModuleLoader__.load({
               h('span', { key: 'dot', className: `ims-dot ${tone}`, 'aria-hidden': true }),
               h('span', { key: 'status', className: 'ims-status' }, status),
               h('span', { key: 'spacer', className: 'ims-spacer' }),
-              h('span', { key: 'count', className: 'ims-count' }, available ?? '—'),
-              h('span', { key: 'pending', className: 'ims-pending' }, translate('panel.pending')),
-              connectorKey
-                ? h(
-                    'button',
-                    {
-                      key: 'mcp',
-                      type: 'button',
-                      className: 'ims-mcp',
-                      disabled: busy,
-                      title: translate(mcpMounted ? 'panel.mcp.unmount' : 'panel.mcp.mount'),
-                      'aria-label': translate(mcpMounted ? 'panel.mcp.unmount' : 'panel.mcp.mount'),
-                      onClick: toggleMcp,
-                    },
-                    busy
-                      ? translate('panel.mcp.working')
-                      : translate(mcpMounted ? 'panel.mcp.unmount' : 'panel.mcp.mount'),
-                  )
+              inboxActive
+                ? h('span', { key: 'count', className: 'ims-count' }, available ?? '—')
                 : null,
+              inboxActive
+                ? h('span', { key: 'pending', className: 'ims-pending' }, translate('panel.pending'))
+                : null,
+              h(
+                'button',
+                {
+                  key: 'mcp',
+                  type: 'button',
+                  className: 'ims-mcp',
+                  disabled: busy,
+                  title: actionLabel,
+                  'aria-label': actionLabel,
+                  onClick: toggleInbox,
+                },
+                busy ? translate('panel.mcp.working') : actionLabel,
+              ),
               h(
                 'button',
                 {

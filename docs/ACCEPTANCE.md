@@ -135,7 +135,7 @@ privacy scan: PASS
   repo files scanned: 50
   adapter state/config/log files: 3
   DSH host log files: 6
-  DSH session logs: 897 (56 inbox-mosire wake messages)
+  DSH session logs: 899 (183 inbox-mosire wake messages)
   secrets checked: dsh-adapter.token, dsh-smoke-adapter.token, producer-main.token,
     smoke-producer.token, smoke-verify.token, dsh-session-app-a-wake.token,
     dsh-session-app-b-wake.token, dsh-session-app-a-wake.legacy.token,
@@ -165,6 +165,7 @@ privacy scan: PASS
 | 17 | `view-ack` wake text has no `inbox_claim` | **pass** | §9 live wake |
 | 18 | Target Agent honors no-claim (never calls `inbox_claim`) | **fail** | §9: target used bash `inbox_claim` + release, then ack |
 | 19 | Manual panel mount/unmount | **pass (unit)** | §10; live button needs client reload |
+| 20 | 卸载 stops Inbox SSE/occupancy/wake and MCP; 挂载 resumes both | **pass (unit)** | manager suspend/resume + panel RPC + render tests |
 
 ## 7. WebUI inbox panel
 
@@ -265,12 +266,20 @@ The target prompt should be updated to use the native
 ## 10. WebUI mount/unmount button
 
 - `programMcpConnectorKey` is local config (`custom-iibot`); the panel now
-  renders 挂载 MCP / 卸载 MCP. The client calls the installed connector's
-  trusted same-origin `/mcp-connector/api` (`setEnabled` + `reconnect`) and
-  refreshes `programMcp`; no token reaches the browser.
-- Unit coverage: config parsing, panel status key, rendered mount/unmount
-  controls. The client half needs a reload/restart before the new button is
-  visible in an already-open page.
+  renders 挂载 / 卸载.
+- **卸载** does two things: disables the configured program MCP through the
+  trusted same-origin `/mcp-connector/api` (`setEnabled`), and calls the Host
+  panel RPC `suspend` for the current binding. `suspend` stops the engine,
+  clears occupancy, sets `enabled=false`, and persists it; a Host restart skips
+  the disabled binding. The row remains as `Inbox 已卸载` + 挂载.
+- **挂载** re-enables the connector and calls panel RPC `resume`, which reloads
+  the token, starts status/SSE, and re-PUTs occupancy.
+- If the binding is active but MCP is missing, the button only mounts MCP.
+- The toggle is single-flight, aborts after 15s, and optimistically flips the
+  panel state; no token reaches the browser.
+- Unit coverage: config parsing, panel status key, suspend/resume manager and
+  RPC, rendered active/missing/unmounted states. The client half needs a reload
+  before the new button behavior is visible in an already-open page.
 
 ## 11. Not verified / limits
 

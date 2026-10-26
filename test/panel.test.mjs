@@ -55,6 +55,16 @@ test('manager panel status exposes counts only for a bound session', async (t) =
     'custom-iibot',
   )
   assert.match(created.manager.statusText('session-a'), /programMcp: state=missing/)
+  await created.manager.suspend('session-a')
+  assert.equal(created.manager.bindingFor('session-a').enabled, false)
+  assert.equal(created.manager.engines.has('session-a'), false)
+  assert.equal(created.manager.panelStatus('session-a').enabled, false)
+  assert.equal(server.occupant, null)
+  await created.manager.resume('session-a')
+  assert.equal(created.manager.bindingFor('session-a').enabled, true)
+  await waitFor(() => created.manager.engines.has('session-a'), { label: 'resumed engine' })
+  assert.equal(created.manager.panelStatus('session-a').enabled, true)
+
   const absent = created.manager.panelStatus('session-absent')
   assert.deepEqual(
     { bound: absent.bound, sessionRef: absent.sessionRef },
@@ -79,6 +89,12 @@ test('the panel RPC channel validates endpoints and never throws', async () => {
     async refreshPanelStatus(sessionId) {
       return { bound: true, sessionRef: sessionId, available: 3, refreshed: true }
     },
+    async suspend(sessionId) {
+      return { ok: true, message: `suspend ${sessionId}` }
+    },
+    async resume(sessionId) {
+      return { ok: true, message: `resume ${sessionId}` }
+    },
   }
   registerPanelRpc(connection, Promise.resolve(manager))
   assert.equal(captured.channel, PANEL_CHANNEL)
@@ -97,6 +113,11 @@ test('the panel RPC channel validates endpoints and never throws', async () => {
     ok: true,
     value: { bound: true, sessionRef: 'session-a', available: 3, refreshed: true },
   })
+
+  const suspended = await captured.handler('suspend', { sessionId: 'session-a' }, SIGNAL, {})
+  assert.equal(suspended.ok, true)
+  const resumed = await captured.handler('resume', { sessionId: 'session-a' }, SIGNAL, {})
+  assert.equal(resumed.ok, true)
 
   const blank = await captured.handler('status', { sessionId: '  ' }, SIGNAL, {})
   assert.equal(blank.ok, false)

@@ -132,10 +132,13 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
   `conversation.input.dock`, uses `ctx.connection.rpc.call`, follows theme
   tokens, registers `zh`/`en` copy, hides when unbound, and polls every 5s.
 - Live registration was observed after the Web Host restart. The panel has a
-  manual **挂载 MCP / 卸载 MCP** button when `programMcpConnectorKey` is set;
-  it calls the installed connector's trusted same-origin
-  `/mcp-connector/api` (`setEnabled` + `reconnect`) and re-probes
-  `programMcp`. No token reaches the browser; the key/credential stay local.
+  manual **挂载 / 卸载** button when `programMcpConnectorKey` is set.
+  **卸载** disables the connector and calls Host RPC `suspend`, stopping the
+  binding engine, clearing occupancy, and persisting `enabled=false`; the row
+  stays as `Inbox 已卸载` with a mount control. **挂载** enables the connector
+  and calls `resume`, which reloads the token, starts status/SSE, and re-PUTs
+  occupancy. The toggle is single-flight with a 15s abort and no token reaches
+  the browser.
 - The button's client half needs one client reload after this code change.
 
 ## 8. Program MCP diagnostic
@@ -198,6 +201,8 @@ ACP artifacts in `/tmp/inbox-mosire-acp/`.
   start a fresh Bot session with no-claim instructions.
 - **Panel button live display** still needs a client reload after the button
   code change; unit coverage and the Host path are in place.
+- **Suspended binding scope**: the connector toggle affects the configured
+  connector scope; it is not a per-session MCP isolation mechanism.
 - The **web profile** still runs the pre-upgrade v1 module generation in its
   live process. The linked package, patch, and state load v2 on the next DSH
   restart. The central InboxMosire MCP connection was disconnected for Mode A.
@@ -210,8 +215,8 @@ ACP artifacts in `/tmp/inbox-mosire-acp/`.
 ## 12. Token leakage check
 
 `scripts/privacy-scan.mjs` reads all ten local credential files and scans 50
-repository files, 3 adapter state/config/log files, 6 DSH host logs, 897 session
-logs (56 wake messages), and every adapter wake message. Result: **PASS**, 0
+repository files, 3 adapter state/config/log files, 6 DSH host logs, 899 session
+logs (183 wake messages), and every adapter wake message. Result: **PASS**, 0
 credential hits.
 Summary text is allowed only in the wake message; state and logs store
 counts/codes only. Content is excluded from the client projection and appears
