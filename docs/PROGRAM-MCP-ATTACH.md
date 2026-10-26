@@ -64,3 +64,26 @@ mcp__iibot__inbox_claim
 如果工具已经出现但状态仍是 `missing`，先检查 DSH 实际公开的工具名前缀是否以
 `__inbox_list`、`__inbox_view` 或 `__inbox_claim` 结尾；再检查 session scope，
 不要先改 Inbox core。
+
+## WebUI 手动挂载/卸载
+
+在 `~/.dsh/inbox-mosire/config.json`（或 `INBOX_PROGRAM_MCP_CONNECTOR_KEY`）
+设置本地 connector key，例如：
+
+```json
+{ "programMcpConnectorKey": "custom-iibot" }
+```
+
+Inbox 面板会在 `programMcp=missing` 时显示“挂载 MCP”，在
+`programMcp=available` 时显示“卸载 MCP”。按钮只调用已安装
+`dsh-mcp-connector` 的同源受信 API：
+
+```text
+POST /mcp-connector/api
+{"method":"setEnabled","params":{"key":"custom-iibot","enabled":true|false}}
+{"method":"reconnect","params":{"key":"custom-iibot"}}
+```
+
+Bearer token 仍在 Host 的 connector credential 中，不进入浏览器、仓库、
+descriptor、wake message 或日志。按钮代码更新后需要一次 client reload/重启
+才会出现在已打开的页面。

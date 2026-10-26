@@ -18,6 +18,10 @@ window.__ModuleLoader__.load({
       'panel.status.no-mcp': '程序 MCP 未挂载',
       'panel.status.error': '读取失败',
       'panel.refresh': '刷新通知数',
+      'panel.mcp.mount': '挂载 MCP',
+      'panel.mcp.unmount': '卸载 MCP',
+      'panel.mcp.working': '处理中…',
+      'panel.mcp.failed': 'MCP 操作失败',
     }
 
     /** English copy, checked against the same key set. */
@@ -31,6 +35,10 @@ window.__ModuleLoader__.load({
       'panel.status.no-mcp': 'program MCP missing',
       'panel.status.error': 'read failed',
       'panel.refresh': 'Refresh notification count',
+      'panel.mcp.mount': 'Mount MCP',
+      'panel.mcp.unmount': 'Unmount MCP',
+      'panel.mcp.working': 'working…',
+      'panel.mcp.failed': 'MCP action failed',
     }
 
     const css = `
@@ -48,6 +56,10 @@ window.__ModuleLoader__.load({
 .ims-spacer{flex:1;min-width:8px}
 .ims-count{flex:none;font-weight:600;font-variant-numeric:tabular-nums;color:var(--dsw-alias-brand-primary)}
 .ims-pending{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px}
+.ims-mcp{flex:none;height:24px;padding:0 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:22px;cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
+.ims-mcp:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}
+.ims-mcp:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.ims-mcp:disabled{opacity:.5;cursor:default}
 .ims-refresh{flex:none;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ims-refresh:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
 .ims-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
@@ -64,6 +76,8 @@ window.__ModuleLoader__.load({
         const translate = typeof t === 'function' ? t : (key) => key
         const [snapshot, setSnapshot] = React.useState({ data: null, error: false })
         const [refreshKey, setRefreshKey] = React.useState(0)
+        const [busy, setBusy] = React.useState(false)
+        const [mcpError, setMcpError] = React.useState(false)
 
         React.useEffect(() => {
           if (!sessionId) return undefined
@@ -107,12 +121,50 @@ window.__ModuleLoader__.load({
         const data = snapshot.data
         if (!data || data.bound !== true) return null
 
+        const connectorKey =
+          typeof data.programMcpConnectorKey === 'string' ? data.programMcpConnectorKey : ''
+        const mcpMounted = data.programMcp === 'available'
+        const toggleMcp = async () => {
+          if (!connectorKey || busy) return
+          setBusy(true)
+          setMcpError(false)
+          try {
+            const request = async (method, params) => {
+              const response = await window.fetch('/mcp-connector/api', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ method, params }),
+              })
+              let body = null
+              try {
+                body = await response.json()
+              } catch {
+                // The status code is enough for a useful failure.
+              }
+              if (!response.ok || body?.ok === false) {
+                throw new Error(body?.message ?? `HTTP ${response.status}`)
+              }
+            }
+            await request('setEnabled', { key: connectorKey, enabled: !mcpMounted })
+            if (!mcpMounted) await request('reconnect', { key: connectorKey })
+            await new Promise((resolve) => setTimeout(resolve, 400))
+            setRefreshKey((value) => value + 1)
+          } catch {
+            setMcpError(true)
+          } finally {
+            setBusy(false)
+          }
+        }
+
         const available = Number.isSafeInteger(data.available) ? data.available : null
         let tone = 'live'
         let status = translate('panel.status.live')
         if (snapshot.error || data.blocked || data.configError) {
           tone = 'error'
           status = translate('panel.status.error')
+        } else if (mcpError) {
+          tone = 'error'
+          status = translate('panel.mcp.failed')
         } else if (data.programMcp === 'missing') {
           tone = 'error'
           status = translate('panel.status.no-mcp')
@@ -175,6 +227,23 @@ window.__ModuleLoader__.load({
               h('span', { key: 'spacer', className: 'ims-spacer' }),
               h('span', { key: 'count', className: 'ims-count' }, available ?? '—'),
               h('span', { key: 'pending', className: 'ims-pending' }, translate('panel.pending')),
+              connectorKey
+                ? h(
+                    'button',
+                    {
+                      key: 'mcp',
+                      type: 'button',
+                      className: 'ims-mcp',
+                      disabled: busy,
+                      title: translate(mcpMounted ? 'panel.mcp.unmount' : 'panel.mcp.mount'),
+                      'aria-label': translate(mcpMounted ? 'panel.mcp.unmount' : 'panel.mcp.mount'),
+                      onClick: toggleMcp,
+                    },
+                    busy
+                      ? translate('panel.mcp.working')
+                      : translate(mcpMounted ? 'panel.mcp.unmount' : 'panel.mcp.mount'),
+                  )
+                : null,
               h(
                 'button',
                 {

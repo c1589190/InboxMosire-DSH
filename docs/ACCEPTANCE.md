@@ -48,16 +48,16 @@ issued inbox=app-b tokenRef=file:/home/cna/InboxMosire/.work/live/secrets/dsh-se
 
 ```console
 $ node --test
-# tests 116
-# pass 116
+# tests 121
+# pass 121
 # fail 0
 # skipped 0
 ```
 
-The 116 include the earlier coverage, `test/summary.test.mjs` (28 tests),
+The 121 include the earlier coverage, `test/summary.test.mjs` (28 tests),
 `test/panel.test.mjs` (3), `test/client-panel.test.mjs` (3),
-`test/program-tools.test.mjs` (3), `test/turn-end.test.mjs` (1), and the live
-file.
+`test/program-tools.test.mjs` (4), `test/turn-end.test.mjs` (1), the config
+coverage, and the live file.
 When the daemon is down the live tests skip rather than fail.
 
 ## 3. Live two-binding + summary
@@ -132,10 +132,10 @@ production code.
 ```console
 $ node scripts/privacy-scan.mjs
 privacy scan: PASS
-  repo files scanned: 47
+  repo files scanned: 50
   adapter state/config/log files: 3
   DSH host log files: 6
-  DSH session logs: 891 (26 inbox-mosire wake messages)
+  DSH session logs: 894 (54 inbox-mosire wake messages)
   secrets checked: dsh-adapter.token, dsh-smoke-adapter.token, producer-main.token,
     smoke-producer.token, smoke-verify.token, dsh-session-app-a-wake.token,
     dsh-session-app-b-wake.token, dsh-session-app-a-wake.legacy.token,
@@ -161,6 +161,10 @@ privacy scan: PASS
 | 13 | Wake warns when program MCP is missing | **pass** | §8 live + unit |
 | 14 | Program-owned MCP can complete the full loop | **pass** | §8 live |
 | 15 | Running turn defers all injection; new revision catches up at turn end | **pass** | `turn-end.test.mjs` (5s backoff bypassed, wake <1s) |
+| 16 | Target Bot session sees 24 iibot tools and `programMcp=available` | **pass** | §9 request header + status |
+| 17 | `view-ack` wake text has no `inbox_claim` | **pass** | §9 live wake |
+| 18 | Target Agent honors no-claim (never calls `inbox_claim`) | **fail** | §9: target used bash `inbox_claim` + release, then ack |
+| 19 | Manual panel mount/unmount | **pass (unit)** | §10; live button needs client reload |
 
 ## 7. WebUI inbox panel
 
@@ -204,7 +208,7 @@ inbox=app-a revision=297 available=1 channels=[ticket]
 摘要（最多 3 条；可能已变化，claim 时以通知板为准）:
 - {"itemId":"itm_...","channel":"ticket","kind":"diagnostic","summary":"诊断测试：程序 MCP 未挂载"}
 
-注意：本会话未检测到程序 MCP 的 inbox_claim/inbox_list 工具；请先挂载程序 MCP，否则本回合无法处理。
+注意：本会话未检测到程序 MCP 的 inbox_list/inbox_view 工具；请先挂载程序 MCP，否则本回合无法处理。
 
 请直接通过你的程序 MCP 调用 inbox_claim 选择本回合要处理的 itemId；
 如果摘要不足，再调用 inbox_list。
@@ -219,7 +223,56 @@ The MCP connection was removed after the test, and the item was drained via the
 program token. No adapter auto-injection was added: the program owns its MCP
 server and token; the adapter only detects and reports whether it is visible.
 
-## 9. Not verified / limits
+## 9. 6b71f6b connector + Bot session live check (2026-10-27)
+
+The actual DSH connector was repaired in place for workspace `simulation2`:
+
+```text
+custom-iibot: streamable-http, manual/bearer
+url:  http://127.0.0.1:8765/mcp/bot
+scope: simulation2 (workspace c0c85162-96b8-4d28-b222-39bb023f5be4)
+tools: 24 (bot_* + inbox_*)
+```
+
+The target Bot session (workspace `simulation2`) was rebound with
+`wakeMode: view-ack`. Its request header at turn 34 contained all 24
+`mcp__iibot__*` tools; `programMcp=available`.
+
+Its revision-166 wake was view-ack and contained no `inbox_claim`:
+
+```text
+[INBOX_HOST_EVENT]
+inbox=iibot-bot-sim revision=166 available=2 channels=[qq]
+
+摘要（最多 3 条；可能已变化，处理时以通知板为准）:
+- {"itemId":"itm_...","channel":"qq","kind":"digest","summary":"..."}
+- {"itemId":"itm_...","channel":"qq","kind":"digest","summary":"..."}
+
+请通过你的程序 MCP 调用 inbox_list / inbox_view 选择本回合要处理的 itemId；
+如果摘要不足，再调用 inbox_list；按该程序定义的处理流程完成。
+如果当前没有可处理项，结束本回合，不要轮询。
+```
+
+**Important finding:** the target Agent still chose its local
+`scripts/06-mcp.sh` path and called `inbox_claim`, then released and called
+`bot_thread_ack` to avoid `INBOX_CONFLICT`. `bot_reply` and `bot_thread_ack`
+both returned `ok:true`, but the no-claim requirement was **not** honored by the
+Agent. The adapter's wake text is correct; this is target-program prompt/Skill
+behavior, not something the DSH adapter can enforce against a shell fallback.
+The target prompt should be updated to use the native
+`mcp__iibot__inbox_list` / `inbox_view` path and never call `inbox_claim`.
+
+## 10. WebUI mount/unmount button
+
+- `programMcpConnectorKey` is local config (`custom-iibot`); the panel now
+  renders 挂载 MCP / 卸载 MCP. The client calls the installed connector's
+  trusted same-origin `/mcp-connector/api` (`setEnabled` + `reconnect`) and
+  refreshes `programMcp`; no token reaches the browser.
+- Unit coverage: config parsing, panel status key, rendered mount/unmount
+  controls. The client half needs a reload/restart before the new button is
+  visible in an already-open page.
+
+## 11. Not verified / limits
 
 - The live daemon cannot be told to return 500 or hang, so those two cases were
   exercised with the fake contract server, not the Java backend.

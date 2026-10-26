@@ -105,6 +105,7 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
 | `summaryMaxItems` | `INBOX_SUMMARY_MAX_ITEMS` | `3` (1–10) |
 | `summaryMaxTitleChars` | `INBOX_SUMMARY_MAX_TITLE_CHARS` | `80` (16–200) |
 | `summaryMaxTotalChars` | `INBOX_SUMMARY_MAX_TOTAL_CHARS` | `600` (120–4000) |
+| `programMcpConnectorKey` | `INBOX_PROGRAM_MCP_CONNECTOR_KEY` | empty; e.g. `custom-iibot` enables the panel MCP toggle |
 | `inboxId` / `tokenFile` / `sessionId` | legacy `INBOX_*` | used only for v1 state migration |
 
 ## State (v2)
@@ -250,6 +251,11 @@ the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
 - if the target session has no program-owned MCP business tool, the strip shows
   `程序 MCP 未挂载` / `program MCP missing` instead of implying the wake is
   actionable;
+- when `programMcpConnectorKey` is configured, the strip has a **挂载 MCP /
+  卸载 MCP** button. It calls the installed `dsh-mcp-connector` trusted
+  same-origin API (`setEnabled` / `reconnect`), then refreshes the panel. The
+  connector key and Bearer credential stay in the Host/local connector store;
+  no token is sent to the browser or written into the repository;
 - the client half is served by DSH's client-module system. Adding a `dsh.client`
   declaration to an already-running Host is picked up only after a DSH Web Host
   restart (the client module graph is cached at boot); existing sessions and

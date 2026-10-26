@@ -131,3 +131,17 @@ test('redact removes the exact token from arbitrary text', async (t) => {
   await writeFile(join(dir, 'f'), 'x')
   assert.equal(await readFile(join(dir, 'f'), 'utf8'), 'x')
 })
+
+test('programMcpConnectorKey is local, bounded, and optional', () => {
+  assert.equal(resolveConfig({}, {}, {}).value.programMcpConnectorKey, '')
+  assert.equal(
+    resolveConfig({ programMcpConnectorKey: 'custom-iibot' }, {}, {}).value.programMcpConnectorKey,
+    'custom-iibot',
+  )
+  assert.equal(
+    resolveConfig({}, { INBOX_PROGRAM_MCP_CONNECTOR_KEY: 'custom-iibot' }, {}).value.programMcpConnectorKey,
+    'custom-iibot',
+  )
+  const bad = resolveConfig({ programMcpConnectorKey: 'bad key' }, {}, {})
+  assert.ok(bad.errors.some((message) => message.includes('programMcpConnectorKey')))
+})

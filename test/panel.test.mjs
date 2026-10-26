@@ -48,7 +48,12 @@ test('manager panel status exposes counts only for a bound session', async (t) =
     state: 'missing',
     at: new Date().toISOString(),
   }
+  created.manager.config.programMcpConnectorKey = 'custom-iibot'
   assert.equal(created.manager.panelStatus('session-a').programMcp, 'missing')
+  assert.equal(
+    created.manager.panelStatus('session-a').programMcpConnectorKey,
+    'custom-iibot',
+  )
   assert.match(created.manager.statusText('session-a'), /programMcp: state=missing/)
   const absent = created.manager.panelStatus('session-absent')
   assert.deepEqual(

@@ -131,10 +131,12 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 - `client.js` registers the dock entry at order 30 in
   `conversation.input.dock`, uses `ctx.connection.rpc.call`, follows theme
   tokens, registers `zh`/`en` copy, hides when unbound, and polls every 5s.
-- The live page was booted before the `dsh.client` declaration, and DSH caches
-  package client metadata until restart, so visual registration requires one
-  DSH Web Host restart. Unit tests cover registration and render states; the
-  mounted RPC route answers `401` without browser auth.
+- Live registration was observed after the Web Host restart. The panel has a
+  manual **挂载 MCP / 卸载 MCP** button when `programMcpConnectorKey` is set;
+  it calls the installed connector's trusted same-origin
+  `/mcp-connector/api` (`setEnabled` + `reconnect`) and re-probes
+  `programMcp`. No token reaches the browser; the key/credential stay local.
+- The button's client half needs one client reload after this code change.
 
 ## 8. Program MCP diagnostic
 
@@ -157,11 +159,30 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 - The adapter does **not** inject or call business tools. Automatic MCP
   attachment remains outside the adapter, as Mode A requires.
 
-## 9. Live acceptance
+## 9. Live connector + Bot session (6b71f6b, 2026-10-27)
+
+- Connector `custom-iibot` was repaired in place: `streamable-http`,
+  `http://127.0.0.1:8765/mcp/bot`, Bearer auth stored in the local connector
+  credential, scope `simulation2`
+  (`c0c85162-96b8-4d28-b222-39bb023f5be4`); 24 `mcp__iibot__*` tools.
+- Target Bot session was rebound with `wakeMode: view-ack`; its request header
+  contained all 24 tools and `programMcp=available`.
+- The revision-166 wake was view-ack, contained no `inbox_claim`, and used
+  `inbox_list` / `inbox_view`.
+- The target Agent still chose its `scripts/06-mcp.sh` path and called
+  `inbox_claim`, then released before `bot_thread_ack`. `bot_reply` and
+  `bot_thread_ack` returned `ok:true`, but the no-claim requirement was not
+  honored by the Agent. This is target-program prompt/Skill behavior; the
+  adapter cannot prevent a shell fallback. The target prompt must be updated
+  to use the native tools and never claim.
+- The no-claim requirement is therefore **not fully accepted** end-to-end even
+  though the DSH side (wake text, mode, tool detection) is correct.
+
+## 10. Live acceptance
 
 | Command | Result |
 |---|---|
-| `node --test` | **116/116 pass** (live tests included while the daemon was up) |
+| `node --test` | **121/121 pass** (live tests included while the daemon was up) |
 | `node --test test/real-backend.test.mjs` | **3/3 pass** — isolation/restart, legacy-token 403 vs reissued 200, bounded 3-line summary, `inbox_view` + `inbox_update` new-summary wake |
 | `node scripts/acceptance-acp.mjs` | **all assertions passed** — S1→app-a, S2→app-b via the model tool; pushes wake only the matching session; archive S1 clears only app-a; S2 wakes again; session logs contain only their own inbox wakes; boards left clean |
 | `node scripts/privacy-scan.mjs` | **PASS** — see §10 for the final counts |
@@ -169,13 +190,14 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 Raw evidence: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-summary/`, and the older
 ACP artifacts in `/tmp/inbox-mosire-acp/`.
 
-## 10. Unverified, degraded, blocked
+## 11. Unverified, degraded, blocked
 
-- **Item 11 is partial**: no program-owned MCP server is running on this
-  machine. The adapter correctly never claims/completes; claim/complete was
-  exercised through the program's own HTTP client surface with the program
-  tokens (the same calls `InboxClientMcpTools` wraps), not through an MCP
-  transport.
+- **Target no-claim behavior is unresolved**: the Bot Agent used its shell
+  `06-mcp.sh inbox_claim` path and release+ack despite the view-ack wake. The
+  adapter cannot block a shell fallback; update the target prompt/Skill or
+  start a fresh Bot session with no-claim instructions.
+- **Panel button live display** still needs a client reload after the button
+  code change; unit coverage and the Host path are in place.
 - The **web profile** still runs the pre-upgrade v1 module generation in its
   live process. The linked package, patch, and state load v2 on the next DSH
   restart. The central InboxMosire MCP connection was disconnected for Mode A.
@@ -185,11 +207,11 @@ ACP artifacts in `/tmp/inbox-mosire-acp/`.
 - Occupancy is advisory; a token without `inbox:occupy` logs a warning and wakes
   continue.
 
-## 11. Token leakage check
+## 12. Token leakage check
 
-`scripts/privacy-scan.mjs` reads all ten local credential files and scans 47
-repository files, 3 adapter state/config/log files, 6 DSH host logs, 891 session
-logs (26 wake messages), and every adapter wake message. Result: **PASS**, 0
+`scripts/privacy-scan.mjs` reads all ten local credential files and scans 50
+repository files, 3 adapter state/config/log files, 6 DSH host logs, 894 session
+logs (54 wake messages), and every adapter wake message. Result: **PASS**, 0
 credential hits.
 Summary text is allowed only in the wake message; state and logs store
 counts/codes only. Content is excluded from the client projection and appears
@@ -211,6 +233,6 @@ repository.
   connector is attached.
 - See `docs/PROGRAM-MCP-ATTACH.md` for connector scope/URL/Bearer setup. The
   adapter still does not auto-attach or call business tools.
-- Test status: `node --test` has 120 tests; with the live daemon probe disabled,
-  117 pass and 3 live real-backend tests skip. The live test must be run only
-  when the target daemon and occupancy are isolated.
+- Test status: `node --test` has 121 tests; with the clean daemon/occupancy it
+  passed 121/121 here. Live tests must be run only when the target daemon and
+  occupancy are isolated.

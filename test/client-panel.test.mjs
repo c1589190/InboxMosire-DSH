@@ -98,6 +98,7 @@ test('the client bundle parses as a standalone module and keeps copy bounded', a
   const text = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   assert.ok(text.includes("id: '@mosire/dsh-inbox-mosire'"))
   assert.ok(text.includes("ctx.connection.rpc.call("))
+  assert.ok(text.includes("/mcp-connector/api"))
   assert.ok(!text.includes('Authorization'))
   assert.ok(!text.includes('inbox_claim'))
   assert.ok(!text.includes('inbox_complete'))
@@ -155,6 +156,7 @@ test('the dock component renders the bound inbox count and hides when unbound', 
         available: 3,
         sse: 'connected',
         programMcp: 'missing',
+        programMcpConnectorKey: 'custom-iibot',
       },
       error: false,
     },
@@ -162,7 +164,27 @@ test('the dock component renders the bound inbox count and hides when unbound', 
   ]
   cursor = 0
   const noMcp = component({ sessionId: 'session-a', t: (key) => key })
-  assert.ok(JSON.stringify(noMcp).includes('panel.status.no-mcp'))
+  const noMcpText = JSON.stringify(noMcp)
+  assert.ok(noMcpText.includes('panel.status.no-mcp'))
+  assert.ok(noMcpText.includes('panel.mcp.mount'))
+
+  states[0] = [
+    {
+      data: {
+        bound: true,
+        inboxId: 'app-a',
+        available: 3,
+        sse: 'connected',
+        programMcp: 'available',
+        programMcpConnectorKey: 'custom-iibot',
+      },
+      error: false,
+    },
+    () => {},
+  ]
+  cursor = 0
+  const mounted = component({ sessionId: 'session-a', t: (key) => key })
+  assert.ok(JSON.stringify(mounted).includes('panel.mcp.unmount'))
 
   states[0] = [{ data: { bound: false }, error: false }, () => {}]
   cursor = 0
