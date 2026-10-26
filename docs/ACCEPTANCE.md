@@ -48,15 +48,15 @@ issued inbox=app-b tokenRef=file:/home/cna/InboxMosire/.work/live/secrets/dsh-se
 
 ```console
 $ node --test
-# tests 101
-# pass 101
+# tests 112
+# pass 112
 # fail 0
 # skipped 0
 ```
 
-The 101 include the four files' old coverage plus `test/summary.test.mjs`
-(23 tests) and the live file. When the daemon is down the live tests skip rather
-than fail.
+The 112 include the earlier coverage, `test/summary.test.mjs` (28 tests),
+`test/panel.test.mjs` (3), `test/client-panel.test.mjs` (3), and the live file.
+When the daemon is down the live tests skip rather than fail.
 
 ## 3. Live two-binding + summary
 
@@ -64,23 +64,24 @@ than fail.
 $ node --test test/real-backend.test.mjs
 ok 1 - v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart
 ok 2 - v2 live summary: old token is rejected by /items, the reissued token is accepted
-ok 3 - v2 live summary: three bounded JSON lines, sanitized title, remaining count
+ok 3 - v2 live summary: three bounded JSON lines, sanitized summary, update, remaining count
 # tests 3
 # pass 3
 # fail 0
 ```
 
-The summary scenario pushes four items to `app-a` (the first title contains a
-quote, newline, and tab), binds a fresh session, and receives one wake:
+The summary scenario pushes four `summary/content` items to `app-a` (the first
+summary contains a quote, newline, and tab), binds a fresh session, and receives
+one wake:
 
 ```text
 [INBOX_HOST_EVENT]
 inbox=app-a revision=46 available=4 channels=[]
 
 摘要（最多 3 条；可能已变化，claim 时以通知板为准）:
-- {"itemId":"itm_...","channel":"ticket","kind":"acceptance","title":"line \"one\" next line"}
-- {"itemId":"itm_...","channel":"ticket","kind":"acceptance","title":"summary-two"}
-- {"itemId":"itm_...","channel":"ticket","kind":"acceptance","title":"summary-three"}
+- {"itemId":"itm_...","channel":"ticket","kind":"acceptance","summary":"line \"one\" next line"}
+- {"itemId":"itm_...","channel":"ticket","kind":"acceptance","summary":"summary-two"}
+- {"itemId":"itm_...","channel":"ticket","kind":"acceptance","summary":"summary-three"}
 - 还有 1 条未展示
 
 请直接通过你的程序 MCP 调用 inbox_claim 选择本回合要处理的 itemId；
@@ -88,10 +89,17 @@ inbox=app-a revision=46 available=4 channels=[]
 如果当前没有可处理项，结束本回合，不要轮询。
 ```
 
-Assertions: three JSON lines; each has exactly `itemId/channel/kind/title`;
-`title` is the cleaned single-line form; `还有 1 条未展示`; no payload marker,
-no `payload` key, no claim token; after `turn/end` the same revision is not
-re-woken; the binding records `summary.state=ok/shown=3/remaining=1`.
+Assertions: three JSON lines; each has exactly
+`itemId/channel/kind/summary`; `summary` is the cleaned single-line form;
+`还有 1 条未展示`; no `content`/`payload` key; no claim token; after `turn/end`
+the same revision is not re-woken; the binding records
+`summary.state=ok/shown=3/remaining=1`.
+
+Then `GET /items/{itemId}` (`inbox_view`) returns `summary` plus the opaque
+`content`; `PATCH /items/{itemId}` (`inbox_update`) changes the summary. The
+next revision wake shows the new summary and no old one, and the same updated
+revision is not woken twice. `content` appears only in the view/claim response,
+never in the wake, state, or logs.
 
 ## 4. Injected failure matrix
 
@@ -109,7 +117,10 @@ production code.
 | Forbidden token persisted across restart | `persisted SUMMARY_FORBIDDEN...` | **pass** — no new `/items` request |
 | Same revision | unit + live | **pass** — one followup, one `/items` per revision |
 | Two bindings, two inboxes | `two bindings never mix...` + live | **pass** — each wake carries only its own item |
-| Title newline/quote/control chars | unit + live | **pass** — cleaned, JSON-escaped, line stays single-line |
+| Summary newline/quote/control chars | unit + live | **pass** — cleaned, JSON-escaped, line stays single-line |
+| Legacy title-only item | `legacy title-only...` | **pass** — `summary` falls back to `title` |
+| `inbox_update` summary change | unit + live | **pass** — new revision shows new summary, old one absent |
+| `content` never in wake/state/logs | unit + live + privacy | **pass** — only view/claim can see it |
 | Summary disabled | `summaryEnabled=false...` | **pass** — no `/items`, fixed no-summary body |
 | No token in artifacts | privacy scan + tests | **pass** |
 
@@ -118,7 +129,7 @@ production code.
 ```console
 $ node scripts/privacy-scan.mjs
 privacy scan: PASS
-  repo files scanned: 41
+  repo files scanned: 45
   adapter state/config/log files: 3
   DSH host log files: 6
   DSH session logs: 881 (15 inbox-mosire wake messages)
@@ -135,15 +146,30 @@ privacy scan: PASS
 | 1 | Old token `/items` 403; reissued token 200 | **pass** | §1 (legacy-scope token; historical file was already revoked) |
 | 2 | Empty board: no `/items`, no wake | **pass** | §4 |
 | 3 | `available > 0`: wake message has at most 3 summaries | **pass** | §3 live + §4 |
-| 4 | Summary has `itemId/channel/kind/title`, no payload | **pass** | §3 live + §4 |
+| 4 | Summary has `itemId/channel/kind/summary`, no content/payload | **pass** | §3 live + §4 |
 | 5 | More than 3 shows “还有 N 条未展示” | **pass** | §3 (`还有 1 条未展示`) |
-| 6 | Newline/quote titles cleaned and JSON-escaped | **pass** | §3 live (`line \"one\" next line`) + §4 |
+| 6 | Newline/quote summary text cleaned and JSON-escaped | **pass** | §3 live (`line \"one\" next line`) + §4 |
 | 7 | `/items` 500/timeout still wakes without summary | **pass** | §4 |
 | 8 | Same revision not woken twice | **pass** | §3 live + §4 |
 | 9 | S1→app-a and S2→app-b summaries never cross | **pass** | §3 live test 1 + §4 |
+| 11 | `inbox_update` summary reaches the next wake | **pass** | §3 live |
+| 12 | Adapter never claims/completes/pushes | **pass** | code/tests; no such client method exists |
 | 10 | No raw token in logs/state/wake/transcript | **pass** | §5 |
 
-## 7. Not verified / limits
+## 7. WebUI inbox panel
+
+- [x] Host RPC `/inbox-mosire` `status` returns counts for one session and
+  nothing else; `curl` without browser auth returns `401` (route mounted,
+  authenticated).
+- [x] Unit tests cover the manager projection, endpoint validation, refresh,
+  no-throw behavior, dictionary parity, and component rendering of
+  `InboxMosire · app-a · 3 pending`; an unbound session renders `null`.
+- [ ] Live page registration was **not** observed in the already-running page:
+  DSH's client-module graph caches each package's `dsh.client` declaration at
+  boot, so this new client half needs one DSH Web Host restart (then a page
+  load). The Host RPC route and the client bundle pass their own tests.
+
+## 8. Not verified / limits
 
 - The live daemon cannot be told to return 500 or hang, so those two cases were
   exercised with the fake contract server, not the Java backend.
@@ -155,6 +181,8 @@ privacy scan: PASS
   uses a newly issued token with exactly the old scope set, not `items:read`.
 - The adapter still does not claim/complete/push; the summary is not a claim
   result, and the claim response remains authoritative.
+- Panel visual verification waits for the DSH Web Host restart described in §7;
+  the page booted before the `dsh.client` declaration existed.
 
 ---
 

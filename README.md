@@ -15,9 +15,10 @@ Each session gets its own `InboxAdapter` engine instance, so bindings cannot
 share or leak a cursor, a revision watermark, a wake, or a backoff.
 
 Before a wake the adapter also performs one bounded summary read
-(`GET /items?limit=N`) and puts up to three `itemId/channel/kind/title` lines in
-the wake message, so the model can often claim directly without an extra
-`inbox_list`. Failure to read the summary never suppresses the wake.
+(`GET /items?limit=N`) and puts up to three `itemId/channel/kind/summary` lines
+in the wake message, so the model can often claim directly without an extra
+`inbox_list`. New items carry `summary`; legacy title-only rows fall back to
+`title`. Failure to read the summary never suppresses the wake.
 
 ## Boundaries (Mode A)
 
@@ -28,13 +29,14 @@ The adapter only:
 2. opens one SSE stream per binding;
 3. reads `status` as the source of truth;
 4. when `available > 0`, reads at most `summaryMaxItems` safe summary rows
-   (`itemId/channel/kind/title` only);
+   (`itemId/channel/kind/summary` only; `title` is the legacy fallback);
 5. calls `agent.followup()` at the idle/turn-end boundary, at most once per
    revision;
 6. persists each binding's cursor/revision/wake/summary diagnostics;
 7. stops on archive/dispose and maintains advisory occupancy.
 
-It never claims, completes, pushes, reads payload/payloadRef, or speaks MCP. The
+It never claims, completes, pushes, reads `content`/`payload`/`payloadRef`, or
+speaks MCP. The
 target session uses its **program-owned MCP** (Mode A) for
 `inbox_list`/`inbox_claim`/`inbox_complete`. The central InboxMosire MCP is not
 exposed to target sessions. The wake token must carry `status:read`,
@@ -136,8 +138,8 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
   is marked `blocked` instead of being dropped.
 - A document belonging to a newer version is refused, never overwritten.
 - A `pendingWake` left by a crash is treated as delivered (at-most-once).
-- Summary diagnostics store only counts/stable codes. Item ids and titles never
-  enter the state file or the logs.
+- Summary diagnostics store only counts/stable codes. Item ids and summary text
+  never enter the state file or the logs.
 
 ## Per-binding wake rules
 
@@ -175,8 +177,8 @@ When the summary succeeds, the followup carries at most `summaryMaxItems` lines:
 inbox={inboxId} revision={revision} available={available} channels=[{changedChannels}]
 
 摘要（最多 {N} 条；可能已变化，claim 时以通知板为准）:
-- {"itemId":"itm_...","channel":"ticket","kind":"reply","title":"..."}
-- {"itemId":"itm_...","channel":"tweet-review","kind":"review","title":"..."}
+- {"itemId":"itm_...","channel":"ticket","kind":"reply","summary":"..."}
+- {"itemId":"itm_...","channel":"tweet-review","kind":"review","summary":"..."}
 - 还有 {remaining} 条未展示
 
 请直接通过你的程序 MCP 调用 inbox_claim 选择本回合要处理的 itemId；
@@ -195,11 +197,15 @@ instead, so the wake still happens:
 
 Summary safety rules:
 
-- only `itemId/channel/kind/title` are read; payload/payloadRef/claim tokens are
-  never requested into the message, state, or logs;
-- titles are untrusted: newlines and control characters are removed, the text
-  is capped by `summaryMaxTitleChars`, and it is embedded with JSON escaping;
-- an empty title falls back to `kind/channel`;
+- only `itemId/channel/kind/summary` are read; `content`, `payload`,
+  `payloadRef`, and claim tokens are never requested into the message, state,
+  or logs;
+- `summary` is preferred; a legacy `title` is used only when `summary` is
+  missing;
+- summary text is untrusted: newlines and control characters are removed, the
+  text is capped by `summaryMaxTitleChars` (the historical setting name), and
+  it is embedded with JSON escaping;
+- an empty summary falls back to `kind/channel`;
 - `summaryMaxItems` and `summaryMaxTotalChars` bound the summary block; the
   fixed instructions are never truncated;
 - channel ids are validated and intersected with the binding/status channels;
@@ -210,10 +216,28 @@ Summary safety rules:
   a warning and retry on the next revision;
 - the summary is not a claim result: the claim response remains authoritative.
 
+## WebUI inbox panel
+
+When the current session has an inbox binding, the Web UI shows a compact
+`InboxMosire · {inbox} · N pending` strip in the composer-context dock (above
+the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
+
+- data path: browser → authenticated Connection RPC `/inbox-mosire` `status`
+  → the binding's last observed `status` counts; no token or item content ever
+  reaches the browser;
+- on mount and on the refresh button the Host performs one read-only
+  `GET /status`, so the count is current even if the first SSE event was missed;
+- the strip follows the Host theme tokens and locale (`zh`/`en`), and refreshes
+  every 5 seconds while mounted;
+- the client half is served by DSH's client-module system. Adding a `dsh.client`
+  declaration to an already-running Host is picked up only after a DSH Web Host
+  restart (the client module graph is cached at boot); existing sessions and
+  bindings survive on disk.
+
 ## Testing and acceptance
 
 ```bash
-node --test                        # 101 tests (unit + live; live skips when the daemon is down)
+node --test                        # 112 tests (unit + live; live skips when the daemon is down)
 node --test test/real-backend.test.mjs   # live app-a/app-b isolation, summary wake, token migration
 node scripts/acceptance-acp.mjs    # real DSH host, two ACP sessions
 node scripts/privacy-scan.mjs      # credentials across repo/state/logs/sessions
@@ -230,6 +254,9 @@ summary-wake run); `docs/DELIVERY.md` is the delivery report.
   different inboxes.
 - Delivery is at-most-once per revision by design.
 - Summary failure degrades to a no-summary wake; it never blocks the wake.
+- `content` is opaque and only reaches the target program through its own MCP
+  (`inbox_view`/`inbox_claim`); the DSH adapter never reads, parses, stores, or
+  forwards it.
 - A `SUMMARY_FORBIDDEN` token keeps waking without summaries until the binding
   is re-bound or `/inbox retry` is run with a token that has `items:read`.
 - Mode A assumes a program-owned MCP server for business tools. If none is

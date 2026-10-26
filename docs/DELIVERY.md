@@ -1,8 +1,8 @@
-# Delivery report — InboxMosire → DSH v2 multi-binding adapter with bounded summary wake
+# Delivery report — InboxMosire → DSH v2 adapter with summary/content wake and WebUI panel
 
 Scope: `/home/cna/InboxMosire-DSH` only. The backend, its HTTP/SSE/MCP contract,
 and the program side were not modified. No backend logic was copied; the adapter
-never claims, completes, pushes, reads payload/payloadRef, or speaks MCP.
+never claims, completes, pushes, reads content/payload/payloadRef, or speaks MCP.
 
 ## 1. Files and key locations
 
@@ -12,13 +12,17 @@ never claims, completes, pushes, reads payload/payloadRef, or speaks MCP.
 | `lib/manager.js` | Multi-binding manager: `BindingManager` :24, `start` :59, `bind` :90, `unbind` :177, `retry` :194, `startBinding` :219, `stopBinding` :307, occupancy :327/:360, lifecycle :401/:451/:465, status :543/:565. |
 | `lib/bindings.js` | Descriptor validation and token refs: `tokenRefPath` :45, `loadBindingToken`, `validateDescriptor` :130. |
 | `lib/state.js` | v2 host state: `emptySummary` :27, `normalizeSummary` :43, `emptyHostState`/`normalizeBinding`/`normalizeHostState` (v1→v2); generic `StateStore.loadDocument`. |
+| `lib/panel.js` | Authenticated Web UI bridge: `PANEL_CHANNEL` `/inbox-mosire`, count-only `status` handler and refresh path. |
+| `client.js` | Browser dock panel in `conversation.input.dock`: locale dictionaries, 5s poll, mount/refresh `GET /status`, hidden when unbound. |
 | `lib/adapter.js` | Per-binding engine: SSE, status, bounded summary read/degrade/dedupe, followup, backoff, lifecycle (`readSummary` :633, `recordSummaryFailure` :672, `deliverWake` :711). |
-| `lib/inbox-client.js` | Read-only client: `getItems` :285, safe projection `normalizeItems` :148, status, occupancy, SSE parser/heartbeat/reconnect. |
-| `lib/template.js` | Bounded summary template (`renderSummarySection` :151, `renderWakeTemplate` :213) and legacy no-summary body. |
+| `lib/inbox-client.js` | Read-only client: `getItems` :285, safe projection `normalizeItems` :148 (summary-first, legacy title fallback, content dropped), status, occupancy, SSE. |
+| `lib/template.js` | Bounded `summary` template (`renderSummarySection` :151, `renderWakeTemplate` :213) and legacy no-summary body. |
 | `lib/commands.js` | `/inbox status\|bind\|unbind\|retry` over the manager. |
 | `tools.js` | `inbox_adapter_status\|bind\|unbind`; descriptor/tokenRef arguments. |
 | `lib/runtime.js` | In-process manager bridge between the engine row and the tool row. |
-| `test/summary.test.mjs` | 23 summary tests: client, template, config, degrade/forbidden, restart, two-binding isolation. |
+| `test/summary.test.mjs` | 28 summary tests: summary/title fallback, template, config, degrade/forbidden, restart, two-binding isolation, update. |
+| `test/panel.test.mjs` | Host panel projection/RPC validation/refresh/no-throw. |
+| `test/client-panel.test.mjs` | Client bundle registration, locale parity, rendered bound/unbound states. |
 | `test/manager.test.mjs` | Migration, isolation, occupancy, rebind, dispose, unbind, cold resume, restart, summary status. |
 | `test/real-backend.test.mjs` | Live app-a/app-b isolation/occupancy/restart, token migration, bounded summary wake. |
 | `scripts/acceptance-acp.mjs` | Real DSH host, two ACP sessions, tool-driven binding. |
@@ -36,6 +40,9 @@ Same Host surface as v1, plus tool registration; full citations in
 - `ctx.tools.register()` (`dsh-tools` `ToolDefinition`, `:115-128`, `agent` at
   `:229`) for the three adapter tools.
 - Occupancy is a backend endpoint; the adapter calls it, the host is unaware.
+- `ctx.connection.rpc.handle('/inbox-mosire', …)` (optional) + the Client
+  `conversation.input.dock` slot for the Web UI count panel; the browser calls
+  `ctx.connection.rpc.call` with the authenticated cookie.
 
 ## 3. v1 → v2 state migration
 
@@ -86,8 +93,9 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 
 - `InboxClient.getItems` uses the existing `Authorization` header, appends the
   binding's channel filters, reuses the client response-size cap, and projects
-  each row to exactly `itemId/channel/kind/title`; payload/payloadRef never enter
-  the process (client :148/:285).
+  each row to exactly `itemId/channel/kind/summary`; `summary` wins, legacy
+  `title` is the fallback, and `content`/`payload`/`payloadRef` never enter the
+  process (client :148/:285).
 - `InboxAdapter.readSummary` runs after the revision dedupe/backoff gates, so an
   empty board, an active turn, an already-woken revision, or a backoff window
   makes **no** `/items` request (adapter :633, :711).
@@ -96,30 +104,46 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
   retried only on the next revision; 401/403 set `SUMMARY_FORBIDDEN`, persist,
   and skip `/items` until re-bind or `/inbox retry` (adapter :672, state :27/:43,
   manager bind/retry reset).
-- Titles and all summary fields are untrusted: control characters/newlines are
-  removed, title length and the whole block are bounded, and rows are JSON
-  encoded; empty titles fall back to `kind/channel` (template :151/:213).
+- Summary text is untrusted: control characters/newlines are removed, text
+  length and the whole block are bounded, and rows are JSON encoded; empty
+  summaries fall back to `kind/channel` (template :151/:213).
 - `summaryEnabled`/`summaryMaxItems`/`summaryMaxTitleChars`/`summaryMaxTotalChars`
   resolve from row config, `INBOX_SUMMARY_*`, the local file, or defaults
   (config :229–:270).
 - `/inbox status` and the adapter status tool print the config, the last outcome
   (`ok/empty/degraded/forbidden/disabled`), `shown/remaining`, timestamp, code,
-  and message; item titles are never stored or logged (adapter :1162/:1221,
+  and message; item summary text is never stored or logged (adapter :1162/:1221,
   manager :527/:590).
 
-## 7. Live acceptance
+## 7. WebUI inbox panel
+
+- `BindingManager.panelStatus(sessionId)` returns one binding's `inboxId`,
+  `available`, `claimed`, `revision`, SSE state, and errors; it never returns
+  item ids, summaries, content, payloads, or the token. `refreshPanelStatus`
+  performs one read-only `GET /status` for the mount/refresh path.
+- `index.js` registers the optional Host Connection RPC channel `/inbox-mosire`
+  only when `connection` exists, so headless/ACP compositions are unaffected.
+- `client.js` registers the dock entry at order 30 in
+  `conversation.input.dock`, uses `ctx.connection.rpc.call`, follows theme
+  tokens, registers `zh`/`en` copy, hides when unbound, and polls every 5s.
+- The live page was booted before the `dsh.client` declaration, and DSH caches
+  package client metadata until restart, so visual registration requires one
+  DSH Web Host restart. Unit tests cover registration and render states; the
+  mounted RPC route answers `401` without browser auth.
+
+## 8. Live acceptance
 
 | Command | Result |
 |---|---|
-| `node --test` | **101/101 pass** (live tests included while the daemon was up) |
-| `node --test test/real-backend.test.mjs` | **3/3 pass** — two-session isolation/restart, legacy-token 403 vs reissued 200, bounded 3-line summary with remaining count |
+| `node --test` | **112/112 pass** (live tests included while the daemon was up) |
+| `node --test test/real-backend.test.mjs` | **3/3 pass** — isolation/restart, legacy-token 403 vs reissued 200, bounded 3-line summary, `inbox_view` + `inbox_update` new-summary wake |
 | `node scripts/acceptance-acp.mjs` | **all assertions passed** — S1→app-a, S2→app-b via the model tool; pushes wake only the matching session; archive S1 clears only app-a; S2 wakes again; session logs contain only their own inbox wakes; boards left clean |
-| `node scripts/privacy-scan.mjs` | **PASS** — 41 repo files, adapter artifacts, 6 host logs, 881 session transcripts, 15 wake messages, 10 credentials, 0 hits |
+| `node scripts/privacy-scan.mjs` | **PASS** — see §10 for the final counts |
 
 Raw evidence: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-summary/`, and the older
 ACP artifacts in `/tmp/inbox-mosire-acp/`.
 
-## 8. Unverified, degraded, blocked
+## 9. Unverified, degraded, blocked
 
 - **Item 11 is partial**: no program-owned MCP server is running on this
   machine. The adapter correctly never claims/completes; claim/complete was
@@ -135,14 +159,15 @@ ACP artifacts in `/tmp/inbox-mosire-acp/`.
 - Occupancy is advisory; a token without `inbox:occupy` logs a warning and wakes
   continue.
 
-## 9. Token leakage check
+## 10. Token leakage check
 
-`scripts/privacy-scan.mjs` reads all ten local credential files (including both
-reissued wake tokens and the legacy-scope proof token) and scans the repository,
-the adapter state/config/log, DSH host logs, the complete decompressed content of
-every session log (881), and every adapter wake message (15). Result: **PASS**, 0
-credential hits. Summary titles are allowed only in the wake message; state and
-logs store counts/codes only. Per-binding tokens are loaded from their
+`scripts/privacy-scan.mjs` reads all ten local credential files and scans 45
+repository files, 3 adapter state/config/log files, 6 DSH host logs, 881 session
+logs (15 wake messages), and every adapter wake message. Result: **PASS**, 0
+credential hits.
+Summary text is allowed only in the wake message; state and logs store
+counts/codes only. Content is excluded from the client projection and appears
+only in a program's own view/claim path. Per-binding tokens are loaded from their
 `file:` refs, used only in the `Authorization` header, registered with the
 redacting logger, and never written to state, logs, wake messages, or the
 repository.

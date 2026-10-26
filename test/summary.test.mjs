@@ -80,7 +80,7 @@ test('client getItems sends the header, channel filter, and limit and returns sa
       itemId: 'itm_fake_1',
       channel: 'ticket',
       kind: 'reply',
-      title: '工单更新',
+      summary: '工单更新',
     },
   ])
   const request = server.requests.at(-1)
@@ -95,8 +95,10 @@ test('client getItems drops payload-like fields even if a server sends them', as
   server.setItemsMode('payload')
   server.push({ channel: 'ticket', title: '标题' })
   const result = await client.getItems({ limit: 3 })
-  assert.deepEqual(Object.keys(result.items[0]).sort(), ['channel', 'itemId', 'kind', 'title'])
+  assert.deepEqual(Object.keys(result.items[0]).sort(), ['channel', 'itemId', 'kind', 'summary'])
   assert.ok(!JSON.stringify(result).includes('SECRET-BODY'))
+  assert.ok(!JSON.stringify(result).includes('SECRET-CONTENT'))
+  assert.ok(!JSON.stringify(result).includes('/secret/content-ref'))
   assert.ok(!JSON.stringify(result).includes('/secret/ref'))
 })
 
@@ -151,9 +153,9 @@ test('summary template renders bounded JSON lines and remaining count', () => {
     channels: ['ticket'],
     summary: {
       items: [
-        { itemId: 'itm_1', channel: 'ticket', kind: 'reply', title: '工单更新' },
-        { itemId: 'itm_2', channel: 'tweet-review', kind: 'review', title: '待审推文' },
-        { itemId: 'itm_3', channel: 'ticket', kind: 'reply', title: '第三条' },
+        { itemId: 'itm_1', channel: 'ticket', kind: 'reply', summary: '工单更新' },
+        { itemId: 'itm_2', channel: 'tweet-review', kind: 'review', summary: '待审推文' },
+        { itemId: 'itm_3', channel: 'ticket', kind: 'reply', summary: '第三条' },
       ],
       remaining: 1,
       maxItems: 3,
@@ -168,9 +170,9 @@ test('summary template renders bounded JSON lines and remaining count', () => {
       'inbox=app-a revision=42 available=4 channels=[ticket]',
       '',
       '摘要（最多 3 条；可能已变化，claim 时以通知板为准）:',
-      line({ itemId: 'itm_1', channel: 'ticket', kind: 'reply', title: '工单更新' }),
-      line({ itemId: 'itm_2', channel: 'tweet-review', kind: 'review', title: '待审推文' }),
-      line({ itemId: 'itm_3', channel: 'ticket', kind: 'reply', title: '第三条' }),
+      line({ itemId: 'itm_1', channel: 'ticket', kind: 'reply', summary: '工单更新' }),
+      line({ itemId: 'itm_2', channel: 'tweet-review', kind: 'review', summary: '待审推文' }),
+      line({ itemId: 'itm_3', channel: 'ticket', kind: 'reply', summary: '第三条' }),
       '- 还有 1 条未展示',
       '',
       '请直接通过你的程序 MCP 调用 inbox_claim 选择本回合要处理的 itemId；',
@@ -180,7 +182,7 @@ test('summary template renders bounded JSON lines and remaining count', () => {
   )
 })
 
-test('summary template cleans untrusted titles and JSON-escapes them', () => {
+test('summary template cleans untrusted summary text and JSON-escapes it', () => {
   const text = renderWakeTemplate({
     inboxId: 'main',
     revision: 1,
@@ -192,7 +194,7 @@ test('summary template cleans untrusted titles and JSON-escapes them', () => {
           itemId: 'itm_1',
           channel: 'ticket',
           kind: 'reply',
-          title: 'He said "hi"\nnext\tline\u0000end',
+          summary: 'He said "hi"\nnext\tline\u0000end',
         },
       ],
       remaining: 0,
@@ -206,15 +208,15 @@ test('summary template cleans untrusted titles and JSON-escapes them', () => {
   assert.ok(!summaryLine.includes('\n'))
   assert.ok(!summaryLine.includes('\u0000'))
   const parsed = JSON.parse(summaryLine.slice(2))
-  assert.equal(parsed.title, 'He said "hi" next line end')
+  assert.equal(parsed.summary, 'He said "hi" next line end')
 })
 
-test('summary template bounds title length, item count, and total summary chars', () => {
+test('summary template bounds summary length, item count, and total summary chars', () => {
   const items = Array.from({ length: 5 }, (_, index) => ({
     itemId: `itm_${index}`,
     channel: 'ticket',
     kind: 'reply',
-    title: `长标题${'字'.repeat(100)}${index}`,
+    summary: `长标题${'字'.repeat(100)}${index}`,
   }))
   const text = renderWakeTemplate({
     inboxId: 'main',
@@ -226,8 +228,8 @@ test('summary template bounds title length, item count, and total summary chars'
   const summaryLines = text.split('\n').filter((row) => row.startsWith('- {"itemId"'))
   assert.equal(summaryLines.length, 1, 'the budget drops later item lines')
   const parsed = JSON.parse(summaryLines[0].slice(2))
-  assert.ok([...parsed.title].length <= 10)
-  assert.ok(parsed.title.endsWith('…'))
+  assert.ok([...parsed.summary].length <= 10)
+  assert.ok(parsed.summary.endsWith('…'))
   const summaryStart = text.indexOf('摘要（最多')
   const footerStart = text.indexOf('请直接通过你的程序 MCP')
   const summarySection = text.slice(summaryStart, footerStart)
@@ -235,7 +237,7 @@ test('summary template bounds title length, item count, and total summary chars'
   assert.ok(text.includes('如果当前没有可处理项，结束本回合，不要轮询。'))
 })
 
-test('summary template falls back to kind/channel for an empty title and ignores payloads', () => {
+test('summary template falls back to kind/channel for empty summary text and ignores content', () => {
   const text = renderWakeTemplate({
     inboxId: 'main',
     revision: 1,
@@ -247,7 +249,7 @@ test('summary template falls back to kind/channel for an empty title and ignores
           itemId: 'itm_1',
           channel: 'ticket',
           kind: 'review',
-          title: '   ',
+          summary: '   ',
           payload: 'SECRET-PAYLOAD',
           payloadRef: '/secret/ref',
         },
@@ -260,8 +262,9 @@ test('summary template falls back to kind/channel for an empty title and ignores
   })
   const summaryLine = text.split('\n').find((row) => row.startsWith('- {"itemId"'))
   const parsed = JSON.parse(summaryLine.slice(2))
-  assert.equal(parsed.title, 'review/ticket')
+  assert.equal(parsed.summary, 'review/ticket')
   assert.ok(!text.includes('SECRET-PAYLOAD'))
+  assert.ok(!text.includes('SECRET-CONTENT'))
   assert.ok(!text.includes('/secret/ref'))
 })
 
@@ -312,7 +315,7 @@ test('one push wakes once with up to three safe summary items and no payload', a
   assert.match(text, /itemId":"itm_fake_1/)
   assert.match(text, /"channel":"ticket"/)
   assert.match(text, /"kind":"reply"/)
-  assert.match(text, /"title":"工单更新"/)
+  assert.match(text, /"summary":"工单更新"/)
   assert.ok(!text.includes('SECRET-BODY'))
   assert.ok(!text.includes('/secret/ref'))
   assert.equal(server.itemsCalls.length, 1)
@@ -332,14 +335,14 @@ test('more than three available items show the remaining count', async (t) => {
   assert.match(text, /available=4/)
 })
 
-test('a title with a newline and quotes is cleaned and escaped', async (t) => {
+test('a summary with a newline and quotes is cleaned and escaped', async (t) => {
   const { server, host } = await adapterSetup(t)
-  server.push({ channel: 'ticket', title: 'a "quote"\nnext\tline' })
+  server.push({ channel: 'ticket', summary: 'a "quote"\nnext\tline' })
   await waitFor(() => host.followups.length === 1, { label: 'summary wake' })
   const text = host.followups[0].message.content[0].text
   const summaryLine = text.split('\n').find((row) => row.startsWith('- {"itemId"'))
   const parsed = JSON.parse(summaryLine.slice(2))
-  assert.equal(parsed.title, 'a "quote" next line')
+  assert.equal(parsed.summary, 'a "quote" next line')
 })
 
 test('items 500 degrades to a no-summary wake and records the warning', async (t) => {
@@ -404,7 +407,7 @@ test('summary channels follow status/binding filters', async (t) => {
   await waitFor(() => host.followups.length === 1, { label: 'filtered wake' })
   const text = host.followups[0].message.content[0].text
   assert.match(text, /available=1/)
-  assert.match(text, /"title":"visible"/)
+  assert.match(text, /"summary":"visible"/)
   assert.ok(!text.includes('hidden'))
   assert.match(server.itemsCalls[0].search, /channel=ticket/)
 })
@@ -520,4 +523,94 @@ test('a persisted SUMMARY_FORBIDDEN survives restart and is not retried', async 
   assert.equal(server.itemsCalls.length, 0, 'a forbidden token is not probed again')
   assert.ok(!host.followups[0].message.content[0].text.includes('摘要（最多'))
   assert.equal(adapter.snapshot().summary.state, 'forbidden')
+})
+
+test('client getItems prefers summary, falls back to legacy title, and drops content', async (t) => {
+  const { server, client } = await clientSetup(t)
+  server.setItemsMode('payload')
+  server.push({ channel: 'ticket', summary: '新摘要', summaryOnly: true })
+  server.push({ channel: 'ticket', legacyTitle: true, title: '旧标题' })
+  server.push({ channel: 'ticket', summary: '优先摘要', aliasTitle: '旧别名' })
+  const result = await client.getItems({ limit: 3 })
+  assert.deepEqual(result.items, [
+    { itemId: 'itm_fake_1', channel: 'ticket', kind: 'reply', summary: '新摘要' },
+    { itemId: 'itm_fake_2', channel: 'ticket', kind: 'reply', summary: '旧标题' },
+    { itemId: 'itm_fake_3', channel: 'ticket', kind: 'reply', summary: '优先摘要' },
+  ])
+  const serialized = JSON.stringify(result)
+  assert.ok(!serialized.includes('SECRET-CONTENT'))
+  assert.ok(!serialized.includes('/secret/content-ref'))
+  assert.ok(!serialized.includes('SECRET-BODY'))
+  assert.ok(!serialized.includes('旧别名'))
+})
+
+test('summary template emits the summary key and ignores content', () => {
+  const text = renderWakeTemplate({
+    inboxId: 'main',
+    revision: 3,
+    available: 1,
+    channels: ['ticket'],
+    summary: {
+      items: [
+        {
+          itemId: 'itm_1',
+          channel: 'ticket',
+          kind: 'reply',
+          summary: '新摘要',
+          content: 'SECRET-CONTENT',
+          contentRef: '/secret/content-ref',
+        },
+      ],
+      remaining: 0,
+      maxItems: 3,
+      maxTitleChars: 80,
+      maxTotalChars: 600,
+    },
+  })
+  const summaryLine = text.split('\n').find((row) => row.startsWith('- {"itemId"'))
+  assert.deepEqual(JSON.parse(summaryLine.slice(2)), {
+    itemId: 'itm_1',
+    channel: 'ticket',
+    kind: 'reply',
+    summary: '新摘要',
+  })
+  assert.ok(!text.includes('SECRET-CONTENT'))
+  assert.ok(!text.includes('/secret/content-ref'))
+  assert.ok(!text.includes('"title"'))
+})
+
+test('a legacy title-only item wakes with the fallback summary', async (t) => {
+  const { server, host } = await adapterSetup(t)
+  server.push({ channel: 'ticket', legacyTitle: true, title: '旧标题回退' })
+  await waitFor(() => host.followups.length === 1, { label: 'legacy fallback wake' })
+  const text = host.followups[0].message.content[0].text
+  const summaryLine = text.split('\n').find((row) => row.startsWith('- {"itemId"'))
+  const parsed = JSON.parse(summaryLine.slice(2))
+  assert.equal(parsed.summary, '旧标题回退')
+  assert.equal(Object.hasOwn(parsed, 'title'), false)
+})
+
+test('inbox_update changes the next revision wake summary without re-waking the old one', async (t) => {
+  const { server, host, agent } = await adapterSetup(t)
+  const pushed = server.push({ channel: 'ticket', summary: '旧摘要' })
+  await waitFor(() => host.followups.length === 1, { label: 'first summary wake' })
+  assert.match(host.followups[0].message.content[0].text, /"summary":"旧摘要"/)
+  host.endTurn(agent)
+  await delay(250)
+  const updated = server.updateSummary(pushed.itemId, '新摘要')
+  assert.ok(updated)
+  await waitFor(() => host.followups.length === 2, { label: 'updated summary wake' })
+  const text = host.followups[1].message.content[0].text
+  assert.match(text, /"summary":"新摘要"/)
+  assert.ok(!text.includes('旧摘要'))
+  host.endTurn(agent)
+  await delay(400)
+  assert.equal(host.followups.length, 2, 'the updated revision is not re-woken')
+})
+
+test('an empty summary falls back to the legacy title alias', async (t) => {
+  const { server, client } = await clientSetup(t)
+  server.push({ channel: 'ticket', summary: '', aliasTitle: 'legacy-empty-summary' })
+  const result = await client.getItems({ limit: 1 })
+  assert.equal(result.items[0].summary, 'legacy-empty-summary')
 })

@@ -128,35 +128,68 @@ export async function startFakeInbox({
 
   /**
    * Push one notification (producer path).
+   *
+   * New items carry `summary`; `legacyTitle: true` emits a title-only item so
+   * the adapter's fallback can be exercised. `aliasTitle` lets a test prove
+   * that `summary` wins over the legacy alias.
+   *
    * @param {object} [input] - push fields.
    * @param {string} [input.channel] - channel id.
    * @param {string} [input.kind] - item kind.
-   * @param {string} [input.title] - item title (untrusted text).
-   * @param {object} [input.payload] - must never reach the adapter summary.
+   * @param {string} [input.summary] - short summary shown by the adapter.
+   * @param {string} [input.title] - summary text, or the legacy title.
+   * @param {string} [input.aliasTitle] - legacy title returned beside summary.
+   * @param {boolean} [input.legacyTitle] - emit a title-only legacy item.
+   * @param {boolean} [input.summaryOnly] - omit the title alias.
+   * @param {string} [input.content] - never returned by `/items`.
+   * @param {object} [input.payload] - never returned by `/items`.
    * @returns {{revision: number, itemId: string}} resulting revision.
    */
-  function push({
-    channel = 'ticket',
-    kind = 'reply',
-    title = 'SECRET-TITLE',
-    payload = { body: 'SECRET-BODY' },
-  } = {}) {
-    void payload
+  function push(input = {}) {
+    const channel = input.channel ?? 'ticket'
+    const kind = input.kind ?? 'reply'
+    const title = input.title ?? 'SECRET-TITLE'
+    const summary = input.summary ?? title
     itemSeq += 1
     const itemId = `itm_fake_${itemSeq}`
-    availableItems.push({
+    const item = {
       itemId,
       channel,
       kind,
-      title,
       priority: 0,
       attempts: 0,
       createdAt: new Date().toISOString(),
-    })
+    }
+    if (input.legacyTitle === true) {
+      item.title = title
+    } else {
+      item.summary = summary
+      if (input.summaryOnly !== true) item.title = input.aliasTitle ?? summary
+    }
+    void input.content
+    void input.payload
+    availableItems.push(item)
     state.revision += 1
     counter(channel).available += 1
     state.available += 1
     publish([channel])
+    return { revision: state.revision, itemId }
+  }
+
+  /**
+   * Replace one available item's summary (the `inbox_update` path) and publish
+   * the revision change.
+   * @param {string} itemId - target item.
+   * @param {string} summary - new summary.
+   * @returns {{revision: number, itemId: string}|undefined} new revision.
+   */
+  function updateSummary(itemId, summary) {
+    const item = availableItems.find((entry) => entry.itemId === itemId)
+    if (!item) return undefined
+    item.summary = summary
+    if (item.title !== undefined) item.title = summary
+    state.revision += 1
+    publish([item.channel])
     return { revision: state.revision, itemId }
   }
 
@@ -369,7 +402,13 @@ export async function startFakeInbox({
         .filter((item) => filter.length === 0 || filter.includes(item.channel))
         .slice(0, limit)
         .map((item) => (itemsModes.has('payload')
-          ? { ...item, payload: { body: 'SECRET-BODY' }, payloadRef: '/secret/ref' }
+          ? {
+              ...item,
+              content: 'SECRET-CONTENT',
+              contentRef: '/secret/content-ref',
+              payload: { body: 'SECRET-BODY' },
+              payloadRef: '/secret/ref',
+            }
           : item))
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ inbox, count: visible.length, items: visible }))
@@ -439,6 +478,7 @@ export async function startFakeInbox({
     occupancyCalls,
     itemsCalls,
     push,
+    updateSummary,
     claim,
     complete,
     release,

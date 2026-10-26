@@ -37,6 +37,7 @@ const SECRET_FILES = [
 const CONTENT_MARKERS = [
   'SECRET-TITLE',
   'SECRET-BODY',
+  'SECRET-CONTENT',
   'SECRET-ACP',
   'acp-active-',
   'acceptance-harness-secret',

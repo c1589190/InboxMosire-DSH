@@ -14,6 +14,7 @@ import { registerInboxCommand } from './lib/commands.js'
 import { ConfigError, readLocalConfig, resolveConfig } from './lib/config.js'
 import { createLogger } from './lib/log.js'
 import { BindingManager } from './lib/manager.js'
+import { registerPanelRpc } from './lib/panel.js'
 import { setManager, setManagerFailure } from './lib/runtime.js'
 import { StateStore, normalizeHostState } from './lib/state.js'
 
@@ -129,6 +130,14 @@ export function apply(ctx, config = {}) {
       setManagerFailure(message)
       return null
     })
+
+  // The dock panel is optional: headless/ACP compositions have no Web
+  // Connection service, so the engine keeps working without it.
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['connection'], (connectionCtx) => {
+      registerPanelRpc(connectionCtx.connection, ready)
+    })
+  }
 
   ctx.effect(() => {
     /** Register `/inbox` as soon as a commands service exists. */

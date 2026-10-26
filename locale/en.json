@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "InboxMosire Wake Adapter",
-    "description": "Subscribes to an InboxMosire inbox and wakes the bound session with a bounded summary host event: status, SSE cursor, revision watermarks, lifecycle binding, and up to three safe item summaries."
+    "description": "Subscribes to an InboxMosire inbox and wakes the bound session with a bounded summary/content-aware host event: status, SSE cursor, revision watermarks, lifecycle binding, and up to three safe item summaries; also adds a WebUI inbox-count dock panel."
   }
 }

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "InboxMosire 唤醒适配器",
-    "description": "订阅 InboxMosire 通知板事件，在会话空闲或回合结束时用带 bounded 摘要的模板唤醒当前 DSH 会话；持久化 cursor、revision 水印、摘要诊断与会话绑定。"
+    "description": "订阅 InboxMosire 通知板事件，在会话空闲或回合结束时用带 bounded 摘要的模板唤醒当前 DSH 会话；持久化 cursor、revision 水印、摘要诊断与会话绑定，并在 WebUI 显示当前 inbox 的待处理数量。"
   }
 }

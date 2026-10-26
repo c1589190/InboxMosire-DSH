@@ -128,8 +128,8 @@ async function push(inbox, token, input) {
 test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', { skip: SKIP }, async (t) => {
   await drain('app-a', programA)
   await drain('app-b', programB)
-  const pushedA = await push('app-a', programA, { title: 'v2-isolation-a', payload: { side: 'a' } })
-  const pushedB = await push('app-b', programB, { title: 'v2-isolation-b', payload: { side: 'b' } })
+  const pushedA = await push('app-a', programA, { summary: 'v2-isolation-a', content: { side: 'a', marker: 'LIVE_CONTENT_A' } })
+  const pushedB = await push('app-b', programB, { summary: 'v2-isolation-b', content: { side: 'b', marker: 'LIVE_CONTENT_B' } })
 
   const host = createFakeHost()
   host.createAgent('session-a')
@@ -155,13 +155,15 @@ test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', {
   const wakeTextB = host.followups.find((entry) => entry.agentId === 'session-b').message.content[0].text
   assert.match(wakeTextA, new RegExp(`inbox=app-a revision=${pushedA.revision}`))
   assert.match(wakeTextB, new RegExp(`inbox=app-b revision=${pushedB.revision}`))
-  assert.match(wakeTextA, /"title":"v2-isolation-a"/)
-  assert.match(wakeTextB, /"title":"v2-isolation-b"/)
+  assert.match(wakeTextA, /"summary":"v2-isolation-a"/)
+  assert.match(wakeTextB, /"summary":"v2-isolation-b"/)
   assert.ok(!wakeTextA.includes('v2-isolation-b'))
   assert.ok(!wakeTextA.includes('app-b'))
-  assert.ok(!wakeTextA.includes('"payload"'))
+  assert.ok(!wakeTextA.includes('"content"'))
+  assert.ok(!wakeTextA.includes('LIVE_CONTENT_A'))
   assert.ok(!wakeTextA.includes('"side"'))
   assert.ok(!wakeTextB.includes('app-a'))
+  assert.ok(!wakeTextB.includes('LIVE_CONTENT_B'))
 
   const occupancyA = await call('/v1/inboxes/app-a/occupancy', { token: wakeA })
   const occupancyB = await call('/v1/inboxes/app-b/occupancy', { token: wakeB })
@@ -178,7 +180,7 @@ test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', {
 
   // A new item on app-a wakes only session-a.
   host.endTurn(host.agents.get('session-a'))
-  await push('app-a', programA, { title: 'v2-isolation-a2', payload: { round: 2 } })
+  await push('app-a', programA, { summary: 'v2-isolation-a2', content: { round: 2, marker: 'LIVE_CONTENT_A2' } })
   await waitFor(
     () => host.followups.filter((entry) => entry.agentId === 'session-a').length === 2,
     { label: 'second A wake', timeoutMs: 8000 },
@@ -207,7 +209,7 @@ test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', {
   )
   await new Promise((resolve) => setTimeout(resolve, 500))
   assert.equal(secondHost.followups.length, 0, 'processed revisions are not replayed')
-  await push('app-b', programB, { title: 'v2-after-restart', payload: { round: 2 } })
+  await push('app-b', programB, { summary: 'v2-after-restart', content: { round: 2, marker: 'LIVE_CONTENT_B2' } })
   await waitFor(
     () => secondHost.followups.filter((entry) => entry.agentId === 'session-b').length === 1,
     { label: 'B wake after restart', timeoutMs: 8000 },
@@ -247,6 +249,11 @@ test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', {
 })
 
 test('v2 live summary: old token is rejected by /items, the reissued token is accepted', { skip: SKIP || !existsSync(LEGACY_WAKE) }, async () => {
+  await drain('app-a', programA)
+  await push('app-a', programA, {
+    summary: 'token-check-summary',
+    content: { marker: 'LIVE_TOKEN_CONTENT' },
+  })
   const legacy = (await readFile(LEGACY_WAKE, 'utf8')).trim()
   const legacyStatus = await call('/v1/inboxes/app-a/status', { token: legacy })
   assert.equal(legacyStatus.status, 200, 'the legacy token is still a valid status/wake token')
@@ -257,24 +264,28 @@ test('v2 live summary: old token is rejected by /items, the reissued token is ac
   const freshItems = await call('/v1/inboxes/app-a/items?limit=3', { token: wakeA })
   assert.equal(freshItems.status, 200, 'the reissued wake token has items:read')
   assert.ok(Array.isArray(freshItems.json.items))
+  assert.equal(freshItems.json.items[0].summary, 'token-check-summary')
   for (const item of freshItems.json.items) {
+    assert.ok(!('content' in item), 'summary responses never carry content')
+    assert.ok(!('contentRef' in item), 'summary responses never carry contentRef')
     assert.ok(!('payload' in item), 'summary responses never carry payload')
     assert.ok(!('payloadRef' in item), 'summary responses never carry payloadRef')
   }
+  await drain('app-a', programA)
 })
 
-test('v2 live summary: three bounded JSON lines, sanitized title, remaining count', { skip: SKIP }, async (t) => {
+test('v2 live summary: three bounded JSON lines, sanitized summary, update, remaining count', { skip: SKIP }, async (t) => {
   await drain('app-a', programA)
   await drain('app-b', programB)
   const first = await push('app-a', programA, {
-    title: 'line "one"\nnext\tline',
-    payload: { secret: 'LIVE_SECRET_SUMMARY_A' },
+    summary: 'line "one"\nnext\tline',
+    content: { secret: 'LIVE_SECRET_SUMMARY_A' },
   })
-  await push('app-a', programA, { title: 'summary-two', payload: { secret: 'LIVE_SECRET_SUMMARY_A' } })
-  await push('app-a', programA, { title: 'summary-three', payload: { secret: 'LIVE_SECRET_SUMMARY_A' } })
+  await push('app-a', programA, { summary: 'summary-two', content: { secret: 'LIVE_SECRET_SUMMARY_A' } })
+  await push('app-a', programA, { summary: 'summary-three', content: { secret: 'LIVE_SECRET_SUMMARY_A' } })
   const fourth = await push('app-a', programA, {
-    title: 'summary-four',
-    payload: { secret: 'LIVE_SECRET_SUMMARY_A' },
+    summary: 'summary-four',
+    content: { secret: 'LIVE_SECRET_SUMMARY_A' },
   })
 
   const host = createFakeHost()
@@ -300,20 +311,47 @@ test('v2 live summary: three bounded JSON lines, sanitized title, remaining coun
   assert.match(text, /- 还有 1 条未展示/)
   for (const row of lines) {
     const item = JSON.parse(row.slice(2))
-    assert.deepEqual(Object.keys(item), ['itemId', 'channel', 'kind', 'title'])
+    assert.deepEqual(Object.keys(item), ['itemId', 'channel', 'kind', 'summary'])
     assert.match(item.itemId, /^itm_/)
     assert.equal(item.channel, 'ticket')
     assert.equal(item.kind, 'acceptance')
   }
-  const titles = lines.map((row) => JSON.parse(row.slice(2)).title)
-  assert.ok(titles.includes('line "one" next line'), `sanitized title in ${JSON.stringify(titles)}`)
+  const summaries = lines.map((row) => JSON.parse(row.slice(2)).summary)
+  assert.ok(summaries.includes('line "one" next line'), `sanitized summary in ${JSON.stringify(summaries)}`)
   assert.ok(!text.includes('LIVE_SECRET_SUMMARY_A'))
+  assert.ok(!text.includes('"content"'))
   assert.ok(!text.includes('"payload"'))
   assert.ok(!text.includes('clm_'))
 
   host.endTurn(host.agents.get('session-summary'))
+  const view = await call(`/v1/inboxes/app-a/items/${first.itemId}`, { token: programA })
+  assert.equal(view.status, 200, 'inbox_view path')
+  assert.equal(view.json.summary, 'line "one"\nnext\tline')
+  assert.equal(view.json.content, '{"secret":"LIVE_SECRET_SUMMARY_A"}', 'content is only visible through view')
+  const updated = await call(`/v1/inboxes/app-a/items/${first.itemId}`, {
+    token: programA,
+    method: 'PATCH',
+    body: {
+      summary: 'line "one" next line UPDATED',
+      expectedRevision: view.json.revision,
+    },
+  })
+  assert.equal(updated.status, 200, `inbox_update path: ${JSON.stringify(updated.json)}`)
+  await waitFor(() => host.followups.length === 2, {
+    label: 'wake after summary update',
+    timeoutMs: 8000,
+  })
+  const updatedText = host.followups[1].message.content[0].text
+  const updatedSummaries = updatedText
+    .split('\n')
+    .filter((row) => row.startsWith('- {"itemId"'))
+    .map((row) => JSON.parse(row.slice(2)).summary)
+  assert.ok(updatedSummaries.includes('line "one" next line UPDATED'), JSON.stringify(updatedSummaries))
+  assert.ok(!updatedSummaries.includes('line "one" next line'))
+  assert.match(updatedText, new RegExp(`revision=${updated.json.revision}`))
+  host.endTurn(host.agents.get('session-summary'))
   await new Promise((resolve) => setTimeout(resolve, 600))
-  assert.equal(host.followups.length, 1, 'the same revision is not woken twice')
+  assert.equal(host.followups.length, 2, 'the same revision is not woken twice')
   assert.equal(created.manager.bindingFor('session-summary').summary.state, 'ok')
   assert.equal(created.manager.bindingFor('session-summary').summary.shown, 3)
   assert.equal(created.manager.bindingFor('session-summary').summary.remaining, 1)

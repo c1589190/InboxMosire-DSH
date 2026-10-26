@@ -1,19 +1,21 @@
 {
   "name": "@mosire/dsh-inbox-mosire",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "InboxMosire v2 multi-binding wake adapter for DeepSeek Harness: per-session bindings, bounded summary wakes, per-binding SSE/cursor/wake isolation, and advisory occupancy.",
+  "description": "InboxMosire v2 multi-binding wake adapter for DeepSeek Harness: bounded summary wakes, per-binding SSE/cursor/wake isolation, advisory occupancy, and a WebUI inbox-count dock panel.",
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
-    "./tools": "./tools.js"
+    "./tools": "./tools.js",
+    "./client": "./client.js"
   },
   "files": [
     "index.js",
     "tools.js",
+    "client.js",
     "lib",
     "cordis.patch.yml",
     "locale/*.json",
@@ -27,6 +29,15 @@
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
     }
   },
   "icon": "./icon.svg",

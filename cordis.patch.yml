@@ -4,6 +4,9 @@
 #   inbox-mosire-adapter  long-lived wake engine (SSE, binding, followup)
 #   inbox-mosire-tools    model-facing tools that delegate to `/inbox`
 #
+# `client.js` (declared through `dsh.client`) adds the optional Web UI
+# inbox-count dock panel; it is loaded by the browser, not by a Loader row.
+#
 # The engine row is inert until an inbox binding exists: either `config.sessionId`
 # names a Session (or `"auto"`), or a human runs `/inbox bind`, or the model calls
 # `inbox_adapter_bind`. Runtime configuration is documented in README.md; the

@@ -60,7 +60,7 @@ test('one push wakes an idle session exactly once with a bounded summary', async
               itemId: 'itm_fake_1',
               channel: 'ticket',
               kind: 'reply',
-              title: '工单更新',
+              summary: '工单更新',
             },
           ],
           remaining: 0,
