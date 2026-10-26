@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
       'panel.status.connecting': '连接中',
       'panel.status.offline': '离线',
       'panel.status.disabled': '已停用',
+      'panel.status.no-mcp': '程序 MCP 未挂载',
       'panel.status.error': '读取失败',
       'panel.refresh': '刷新通知数',
     }
@@ -27,6 +28,7 @@ window.__ModuleLoader__.load({
       'panel.status.connecting': 'connecting',
       'panel.status.offline': 'offline',
       'panel.status.disabled': 'disabled',
+      'panel.status.no-mcp': 'program MCP missing',
       'panel.status.error': 'read failed',
       'panel.refresh': 'Refresh notification count',
     }
@@ -111,6 +113,9 @@ window.__ModuleLoader__.load({
         if (snapshot.error || data.blocked || data.configError) {
           tone = 'error'
           status = translate('panel.status.error')
+        } else if (data.programMcp === 'missing') {
+          tone = 'error'
+          status = translate('panel.status.no-mcp')
         } else if (data.enabled === false) {
           tone = 'offline'
           status = translate('panel.status.disabled')

@@ -147,6 +147,23 @@ test('the dock component renders the bound inbox count and hides when unbound', 
   const count = bar.children.find((child) => child?.props?.className === 'ims-count')
   assert.equal(count.children, 3)
 
+  states[0] = [
+    {
+      data: {
+        bound: true,
+        inboxId: 'app-a',
+        available: 3,
+        sse: 'connected',
+        programMcp: 'missing',
+      },
+      error: false,
+    },
+    () => {},
+  ]
+  cursor = 0
+  const noMcp = component({ sessionId: 'session-a', t: (key) => key })
+  assert.ok(JSON.stringify(noMcp).includes('panel.status.no-mcp'))
+
   states[0] = [{ data: { bound: false }, error: false }, () => {}]
   cursor = 0
   const hidden = component({ sessionId: 'session-a', t: (key) => key })

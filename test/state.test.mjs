@@ -182,4 +182,18 @@ test('a binding summary record repairs unknown states and preserves forbidden', 
   assert.equal(junk.summary.state, 'unknown')
   assert.equal(junk.summary.at, null)
   assert.equal(emptyBinding('session-a').summary.state, 'unknown')
+  assert.equal(emptyBinding('session-a').health.programMcp.state, 'unknown')
+  const withProgram = normalizeBinding(
+    { health: { programMcp: { state: 'missing', at: '2026-10-26T00:00:00.000Z' } } },
+    'session-a',
+  )
+  assert.deepEqual(withProgram.health.programMcp, {
+    state: 'missing',
+    at: '2026-10-26T00:00:00.000Z',
+  })
+  const junkProgram = normalizeBinding(
+    { health: { programMcp: { state: 'made-up', at: 1 } } },
+    'session-a',
+  )
+  assert.deepEqual(junkProgram.health.programMcp, { state: 'unknown', at: null })
 })

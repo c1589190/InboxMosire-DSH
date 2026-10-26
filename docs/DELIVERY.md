@@ -13,7 +13,7 @@ never claims, completes, pushes, reads content/payload/payloadRef, or speaks MCP
 | `lib/bindings.js` | Descriptor validation and token refs: `tokenRefPath` :45, `loadBindingToken`, `validateDescriptor` :130. |
 | `lib/state.js` | v2 host state: `emptySummary` :27, `normalizeSummary` :43, `emptyHostState`/`normalizeBinding`/`normalizeHostState` (v1→v2); generic `StateStore.loadDocument`. |
 | `lib/panel.js` | Authenticated Web UI bridge: `PANEL_CHANNEL` `/inbox-mosire`, count-only `status` handler and refresh path. |
-| `client.js` | Browser dock panel in `conversation.input.dock`: locale dictionaries, 5s poll, mount/refresh `GET /status`, hidden when unbound. |
+| `client.js` | Browser dock panel in `conversation.input.dock`: locale dictionaries, 5s poll, mount/refresh `GET /status`, hidden when unbound, `程序 MCP 未挂载` state. |
 | `lib/adapter.js` | Per-binding engine: SSE, status, bounded summary read/degrade/dedupe, followup, backoff, lifecycle (`readSummary` :633, `recordSummaryFailure` :672, `deliverWake` :711). |
 | `lib/inbox-client.js` | Read-only client: `getItems` :285, safe projection `normalizeItems` :148 (summary-first, legacy title fallback, content dropped), status, occupancy, SSE. |
 | `lib/template.js` | Bounded `summary` template (`renderSummarySection` :151, `renderWakeTemplate` :213) and legacy no-summary body. |
@@ -22,6 +22,7 @@ never claims, completes, pushes, reads content/payload/payloadRef, or speaks MCP
 | `lib/runtime.js` | In-process manager bridge between the engine row and the tool row. |
 | `test/summary.test.mjs` | 28 summary tests: summary/title fallback, template, config, degrade/forbidden, restart, two-binding isolation, update. |
 | `test/panel.test.mjs` | Host panel projection/RPC validation/refresh/no-throw. |
+| `test/program-tools.test.mjs` | Wake warning/state for `programMcp` available vs missing. |
 | `test/client-panel.test.mjs` | Client bundle registration, locale parity, rendered bound/unbound states. |
 | `test/manager.test.mjs` | Migration, isolation, occupancy, rebind, dispose, unbind, cold resume, restart, summary status. |
 | `test/real-backend.test.mjs` | Live app-a/app-b isolation/occupancy/restart, token migration, bounded summary wake. |
@@ -131,11 +132,30 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
   DSH Web Host restart. Unit tests cover registration and render states; the
   mounted RPC route answers `401` without browser auth.
 
-## 8. Live acceptance
+## 8. Program MCP diagnostic
+
+- `InboxAdapter.recordProgramMcp` asks the live agent's tool schema whether
+  `inbox_claim`/`inbox_list` is visible (including MCP-prefixed names), stores
+  `health.programMcp`, and adds a warning to the wake only when it is
+  `missing`; the wake is still delivered.
+- `state.js` persists only `{state, at}` for `programMcp`; `manager.panelStatus`
+  exposes the state and `/inbox status` prints it. The Client strip shows
+  `程序 MCP 未挂载` when missing.
+- A temporary program-owned stdio MCP for app-a (8 tools, program token) was
+  attached through the DSH connector for the live test:
+  `status/list/view/claim/complete` succeeded (revision 294→296), wake had no
+  warning and `programMcp=available`.
+- After disconnecting the MCP, a new item (revision 297) produced a wake with
+  the missing-tool warning and `programMcp=missing`; the item was drained via
+  the program token and the connector was removed.
+- The adapter does **not** inject or call business tools. Automatic MCP
+  attachment remains outside the adapter, as Mode A requires.
+
+## 9. Live acceptance
 
 | Command | Result |
 |---|---|
-| `node --test` | **112/112 pass** (live tests included while the daemon was up) |
+| `node --test` | **115/115 pass** (live tests included while the daemon was up) |
 | `node --test test/real-backend.test.mjs` | **3/3 pass** — isolation/restart, legacy-token 403 vs reissued 200, bounded 3-line summary, `inbox_view` + `inbox_update` new-summary wake |
 | `node scripts/acceptance-acp.mjs` | **all assertions passed** — S1→app-a, S2→app-b via the model tool; pushes wake only the matching session; archive S1 clears only app-a; S2 wakes again; session logs contain only their own inbox wakes; boards left clean |
 | `node scripts/privacy-scan.mjs` | **PASS** — see §10 for the final counts |
@@ -143,7 +163,7 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 Raw evidence: `docs/ACCEPTANCE.md`, `/tmp/inbox-mosire-summary/`, and the older
 ACP artifacts in `/tmp/inbox-mosire-acp/`.
 
-## 9. Unverified, degraded, blocked
+## 10. Unverified, degraded, blocked
 
 - **Item 11 is partial**: no program-owned MCP server is running on this
   machine. The adapter correctly never claims/completes; claim/complete was
@@ -159,11 +179,11 @@ ACP artifacts in `/tmp/inbox-mosire-acp/`.
 - Occupancy is advisory; a token without `inbox:occupy` logs a warning and wakes
   continue.
 
-## 10. Token leakage check
+## 11. Token leakage check
 
-`scripts/privacy-scan.mjs` reads all ten local credential files and scans 45
-repository files, 3 adapter state/config/log files, 6 DSH host logs, 881 session
-logs (15 wake messages), and every adapter wake message. Result: **PASS**, 0
+`scripts/privacy-scan.mjs` reads all ten local credential files and scans 46
+repository files, 3 adapter state/config/log files, 6 DSH host logs, 886 session
+logs (18 wake messages), and every adapter wake message. Result: **PASS**, 0
 credential hits.
 Summary text is allowed only in the wake message; state and logs store
 counts/codes only. Content is excluded from the client projection and appears

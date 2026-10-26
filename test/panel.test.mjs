@@ -41,8 +41,15 @@ test('manager panel status exposes counts only for a bound session', async (t) =
   assert.equal(panel.claimed, 0)
   assert.equal(panel.revision, pushed.revision)
   assert.equal(panel.sse, 'connected')
+  assert.equal(panel.programMcp, 'available')
   assert.ok(!JSON.stringify(panel).includes('PANEL-SECRET-SUMMARY'))
   assert.ok(!JSON.stringify(panel).includes('test-token'))
+  created.manager.bindingFor('session-a').health.programMcp = {
+    state: 'missing',
+    at: new Date().toISOString(),
+  }
+  assert.equal(created.manager.panelStatus('session-a').programMcp, 'missing')
+  assert.match(created.manager.statusText('session-a'), /programMcp: state=missing/)
   const absent = created.manager.panelStatus('session-absent')
   assert.deepEqual(
     { bound: absent.bound, sessionRef: absent.sessionRef },

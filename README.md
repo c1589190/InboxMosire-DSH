@@ -126,7 +126,8 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
       "lastWake": { "revision": 40, "available": 1, "summary": { "state": "ok", "shown": 1, "remaining": 0 } },
       "summary": { "state": "ok", "shown": 1, "remaining": 0, "code": null, "at": "2026-10-26T13:27:30.000Z" },
       "enabled": true,
-      "health": { "sse": "connected", "session": "live", "occupied": "occupied" }
+      "health": { "sse": "connected", "session": "live", "occupied": "occupied",
+                  "programMcp": { "state": "available", "at": "2026-10-26T13:27:31.000Z" } }
     }
   },
   "legacyV1": { "…": "v1 snapshot, preserved" }
@@ -229,15 +230,40 @@ the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
   `GET /status`, so the count is current even if the first SSE event was missed;
 - the strip follows the Host theme tokens and locale (`zh`/`en`), and refreshes
   every 5 seconds while mounted;
+- if the target session has no program-owned MCP business tool, the strip shows
+  `程序 MCP 未挂载` / `program MCP missing` instead of implying the wake is
+  actionable;
 - the client half is served by DSH's client-module system. Adding a `dsh.client`
   declaration to an already-running Host is picked up only after a DSH Web Host
   restart (the client module graph is cached at boot); existing sessions and
   bindings survive on disk.
 
+## Program MCP diagnostic
+
+The adapter never injects or calls business tools. At each wake it asks the live
+agent's tool schema whether `inbox_claim` or `inbox_list` is visible (including
+MCP-prefixed names such as `mcp__app-a-inbox__inbox_claim`), and stores the result
+as `health.programMcp`:
+
+```json
+{ "state": "available" | "missing" | "unknown", "at": "..." }
+```
+
+- `available`: the wake instructions are actionable; no warning is added;
+- `missing`: the wake still happens, but it carries
+  `注意：本会话未检测到程序 MCP 的 inbox_claim/inbox_list 工具；请先挂载程序 MCP，否则本回合无法处理。`
+  and `/inbox status` / the WebUI strip show the same condition;
+- `unknown`: tool introspection was unavailable; no claim is made either way.
+
+This is deliberately a diagnostic, not automatic tool injection: the program
+owns its MCP server and token, and the adapter must not speak MCP or expose
+business tools. To run the full loop, attach the program-owned MCP for the
+bound inbox; detach it after testing if it is only a temporary harness.
+
 ## Testing and acceptance
 
 ```bash
-node --test                        # 112 tests (unit + live; live skips when the daemon is down)
+node --test                        # 115 tests (unit + live; live skips when the daemon is down)
 node --test test/real-backend.test.mjs   # live app-a/app-b isolation, summary wake, token migration
 node scripts/acceptance-acp.mjs    # real DSH host, two ACP sessions
 node scripts/privacy-scan.mjs      # credentials across repo/state/logs/sessions
@@ -260,5 +286,6 @@ summary-wake run); `docs/DELIVERY.md` is the delivery report.
 - A `SUMMARY_FORBIDDEN` token keeps waking without summaries until the binding
   is re-bound or `/inbox retry` is run with a token that has `items:read`.
 - Mode A assumes a program-owned MCP server for business tools. If none is
-  running, a woken session has no inbox tools until one is attached.
+  attached, the wake is still delivered but carries the `programMcp=missing`
+  warning; the adapter never auto-attaches or calls business tools.
 - The adapter is read-only against InboxMosire.

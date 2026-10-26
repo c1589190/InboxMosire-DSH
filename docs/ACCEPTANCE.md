@@ -48,14 +48,15 @@ issued inbox=app-b tokenRef=file:/home/cna/InboxMosire/.work/live/secrets/dsh-se
 
 ```console
 $ node --test
-# tests 112
-# pass 112
+# tests 115
+# pass 115
 # fail 0
 # skipped 0
 ```
 
-The 112 include the earlier coverage, `test/summary.test.mjs` (28 tests),
-`test/panel.test.mjs` (3), `test/client-panel.test.mjs` (3), and the live file.
+The 115 include the earlier coverage, `test/summary.test.mjs` (28 tests),
+`test/panel.test.mjs` (3), `test/client-panel.test.mjs` (3),
+`test/program-tools.test.mjs` (3), and the live file.
 When the daemon is down the live tests skip rather than fail.
 
 ## 3. Live two-binding + summary
@@ -129,10 +130,10 @@ production code.
 ```console
 $ node scripts/privacy-scan.mjs
 privacy scan: PASS
-  repo files scanned: 45
+  repo files scanned: 46
   adapter state/config/log files: 3
   DSH host log files: 6
-  DSH session logs: 881 (15 inbox-mosire wake messages)
+  DSH session logs: 886 (18 inbox-mosire wake messages)
   secrets checked: dsh-adapter.token, dsh-smoke-adapter.token, producer-main.token,
     smoke-producer.token, smoke-verify.token, dsh-session-app-a-wake.token,
     dsh-session-app-b-wake.token, dsh-session-app-a-wake.legacy.token,
@@ -152,9 +153,11 @@ privacy scan: PASS
 | 7 | `/items` 500/timeout still wakes without summary | **pass** | §4 |
 | 8 | Same revision not woken twice | **pass** | §3 live + §4 |
 | 9 | S1→app-a and S2→app-b summaries never cross | **pass** | §3 live test 1 + §4 |
+| 10 | No raw token in logs/state/wake/transcript | **pass** | §5 |
 | 11 | `inbox_update` summary reaches the next wake | **pass** | §3 live |
 | 12 | Adapter never claims/completes/pushes | **pass** | code/tests; no such client method exists |
-| 10 | No raw token in logs/state/wake/transcript | **pass** | §5 |
+| 13 | Wake warns when program MCP is missing | **pass** | §8 live + unit |
+| 14 | Program-owned MCP can complete the full loop | **pass** | §8 live |
 
 ## 7. WebUI inbox panel
 
@@ -164,12 +167,56 @@ privacy scan: PASS
 - [x] Unit tests cover the manager projection, endpoint validation, refresh,
   no-throw behavior, dictionary parity, and component rendering of
   `InboxMosire · app-a · 3 pending`; an unbound session renders `null`.
-- [ ] Live page registration was **not** observed in the already-running page:
-  DSH's client-module graph caches each package's `dsh.client` declaration at
-  boot, so this new client half needs one DSH Web Host restart (then a page
-  load). The Host RPC route and the client bundle pass their own tests.
+- [x] Live page registration was observed **after the DSH Web Host restart**:
+  `conversation.input.dock` lists occupant `id: inbox-mosire`, `order: 30`,
+  `active: true`. The authenticated Host RPC route is mounted (unauthenticated
+  requests return `401`); the strip showed the bound `app-a` count during the
+  demo. The client-side `程序 MCP 未挂载` text needs one more client load to
+  appear because the client half changed after that restart.
 
-## 8. Not verified / limits
+## 8. Program MCP injection and diagnostic (2026-10-26)
+
+A temporary **program-owned** stdio MCP server for `app-a` was attached through
+the DSH MCP connector (8 tools: `inbox_status/list/view/claim/complete/update/
+append/delete`, using `program-a-mcp.token`). It is not the central MCP and it is
+not provided by the adapter. With it attached:
+
+```console
+inbox_status   -> revision 294 available 1
+inbox_list     -> "诊断测试：程序 MCP 已挂载"
+inbox_view     -> content {"case":"mcp-available"}
+inbox_claim    -> 1 claimed, claimToken returned only in the tool result
+inbox_complete -> revision 296, available 0
+```
+
+The wake for revision 294 had **no** missing-MCP warning, and
+`bindings[session].health.programMcp = {state:"available"}`.
+
+Then the MCP connection was disconnected and a second item was pushed:
+
+```text
+[INBOX_HOST_EVENT]
+inbox=app-a revision=297 available=1 channels=[ticket]
+
+摘要（最多 3 条；可能已变化，claim 时以通知板为准）:
+- {"itemId":"itm_...","channel":"ticket","kind":"diagnostic","summary":"诊断测试：程序 MCP 未挂载"}
+
+注意：本会话未检测到程序 MCP 的 inbox_claim/inbox_list 工具；请先挂载程序 MCP，否则本回合无法处理。
+
+请直接通过你的程序 MCP 调用 inbox_claim 选择本回合要处理的 itemId；
+如果摘要不足，再调用 inbox_list。
+如果当前没有可处理项，结束本回合，不要轮询。
+```
+
+`health.programMcp` became `{state:"missing", at:"..."}` and the last wake
+recorded the same state. The diagnostic is a warning only: the wake still
+orders/delivers and the adapter never calls `inbox_claim` itself.
+
+The MCP connection was removed after the test, and the item was drained via the
+program token. No adapter auto-injection was added: the program owns its MCP
+server and token; the adapter only detects and reports whether it is visible.
+
+## 9. Not verified / limits
 
 - The live daemon cannot be told to return 500 or hang, so those two cases were
   exercised with the fake contract server, not the Java backend.
@@ -181,6 +228,11 @@ privacy scan: PASS
   uses a newly issued token with exactly the old scope set, not `items:read`.
 - The adapter still does not claim/complete/push; the summary is not a claim
   result, and the claim response remains authoritative.
+- The program-MCP loop above used a temporary `/tmp` stdio bridge, removed after
+  the test; automatic MCP attachment is intentionally **not** implemented. The
+  adapter detects `programMcp` but never injects or calls it.
+- The client-side `program MCP missing` strip text needs one page/client reload
+  to appear; the Host-side wake warning and state are already live.
 - Panel visual verification waits for the DSH Web Host restart described in §7;
   the page booted before the `dsh.client` declaration existed.
 

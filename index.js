@@ -99,6 +99,17 @@ async function createManager(ctx, rowConfig, baseLogger) {
     isIdle: (agent) => agent?.status === 'idle',
     followup: (agent, message) => agent.followup(message),
     now: () => Date.now(),
+    hasBusinessTools: (agent) => {
+      try {
+        const tools = agent?.ctx?.tools
+        if (!tools || typeof tools.schemas !== 'function') return undefined
+        const names = tools.schemas().map((schema) => schema?.name).filter((name) => typeof name === 'string')
+        return names.some((name) => name === 'inbox_claim' || name.endsWith('__inbox_claim')
+          || name === 'inbox_list' || name.endsWith('__inbox_list'))
+      } catch {
+        return undefined
+      }
+    },
   }
   const manager = new BindingManager({ config, logger, store, state: loaded.state, host })
   return { manager, logger, config }

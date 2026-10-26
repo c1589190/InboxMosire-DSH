@@ -172,6 +172,8 @@ export function createFakeHost({ now } = {}) {
     followups,
     logs,
     disposers,
+    /** Whether a program-owned MCP business tool should appear available. */
+    businessTools: true,
     baseLogger,
     emit,
     createAgent,
@@ -295,6 +297,7 @@ export async function createTestAdapter({
       isIdle: (agent) => agent?.status === 'idle',
       followup: (agent, message) => agent.followup(message),
       now: host.now,
+      hasBusinessTools: () => host.businessTools !== false,
     },
     tokenSource: { kind: 'inline' },
   })
@@ -377,6 +380,7 @@ export async function createTestManager({ host, overrides = {}, stateFile, state
       isIdle: (agent) => agent?.status === 'idle',
       followup: (agent, message) => agent.followup(message),
       now: host.now,
+      hasBusinessTools: () => host.businessTools !== false,
     },
   })
   const { wireHostEvents } = await import('../../index.js')
