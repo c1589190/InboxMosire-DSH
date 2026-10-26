@@ -48,15 +48,16 @@ issued inbox=app-b tokenRef=file:/home/cna/InboxMosire/.work/live/secrets/dsh-se
 
 ```console
 $ node --test
-# tests 115
-# pass 115
+# tests 116
+# pass 116
 # fail 0
 # skipped 0
 ```
 
-The 115 include the earlier coverage, `test/summary.test.mjs` (28 tests),
+The 116 include the earlier coverage, `test/summary.test.mjs` (28 tests),
 `test/panel.test.mjs` (3), `test/client-panel.test.mjs` (3),
-`test/program-tools.test.mjs` (3), and the live file.
+`test/program-tools.test.mjs` (3), `test/turn-end.test.mjs` (1), and the live
+file.
 When the daemon is down the live tests skip rather than fail.
 
 ## 3. Live two-binding + summary
@@ -123,6 +124,7 @@ production code.
 | `inbox_update` summary change | unit + live | **pass** — new revision shows new summary, old one absent |
 | `content` never in wake/state/logs | unit + live + privacy | **pass** — only view/claim can see it |
 | Summary disabled | `summaryEnabled=false...` | **pass** — no `/items`, fixed no-summary body |
+| New revision while the Agent runs | `turn-end.test.mjs` | **pass** — no injection during the turn; turn-end catch-up wakes within the test budget despite a 5s backoff |
 | No token in artifacts | privacy scan + tests | **pass** |
 
 ## 5. Privacy scan
@@ -130,10 +132,10 @@ production code.
 ```console
 $ node scripts/privacy-scan.mjs
 privacy scan: PASS
-  repo files scanned: 46
+  repo files scanned: 47
   adapter state/config/log files: 3
   DSH host log files: 6
-  DSH session logs: 886 (18 inbox-mosire wake messages)
+  DSH session logs: 891 (26 inbox-mosire wake messages)
   secrets checked: dsh-adapter.token, dsh-smoke-adapter.token, producer-main.token,
     smoke-producer.token, smoke-verify.token, dsh-session-app-a-wake.token,
     dsh-session-app-b-wake.token, dsh-session-app-a-wake.legacy.token,
@@ -158,6 +160,7 @@ privacy scan: PASS
 | 12 | Adapter never claims/completes/pushes | **pass** | code/tests; no such client method exists |
 | 13 | Wake warns when program MCP is missing | **pass** | §8 live + unit |
 | 14 | Program-owned MCP can complete the full loop | **pass** | §8 live |
+| 15 | Running turn defers all injection; new revision catches up at turn end | **pass** | `turn-end.test.mjs` (5s backoff bypassed, wake <1s) |
 
 ## 7. WebUI inbox panel
 

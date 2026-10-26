@@ -162,6 +162,23 @@ available == 0               -> silent
 - `agent/disposed` / `workspace/session-stop` stop only that binding and clear
   its occupancy.
 
+## Turn-end catch-up
+
+While the Agent is running, the adapter does **not** read status/items and does
+**not** inject a followup. SSE events only mark the binding dirty; InboxMosire
+continues to update normally.
+
+At the turn-end boundary (`agent/status` idle or `session/event` `turn/end`):
+
+```text
+300ms debounce -> GET /status -> (new revision?) -> items summary -> one followup
+```
+
+If a new revision arrived during the turn, this catch-up **bypasses the
+no-progress backoff**, so stopping the turn can produce a wake almost
+immediately after the 300ms debounce instead of waiting 30s+. Same-revision
+turns still never re-wake, and backoff still applies to idle/new-event paths.
+
 ## Occupancy
 
 `PUT /v1/inboxes/{inbox}/occupancy {"occupiedBy":"<sessionRef>"}` on bind (and
@@ -263,7 +280,7 @@ bound inbox; detach it after testing if it is only a temporary harness.
 ## Testing and acceptance
 
 ```bash
-node --test                        # 115 tests (unit + live; live skips when the daemon is down)
+node --test                        # 116 tests (unit + live; live skips when the daemon is down)
 node --test test/real-backend.test.mjs   # live app-a/app-b isolation, summary wake, token migration
 node scripts/acceptance-acp.mjs    # real DSH host, two ACP sessions
 node scripts/privacy-scan.mjs      # credentials across repo/state/logs/sessions

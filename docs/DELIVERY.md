@@ -23,6 +23,7 @@ never claims, completes, pushes, reads content/payload/payloadRef, or speaks MCP
 | `test/summary.test.mjs` | 28 summary tests: summary/title fallback, template, config, degrade/forbidden, restart, two-binding isolation, update. |
 | `test/panel.test.mjs` | Host panel projection/RPC validation/refresh/no-throw. |
 | `test/program-tools.test.mjs` | Wake warning/state for `programMcp` available vs missing. |
+| `test/turn-end.test.mjs` | Running turn defers injection; a new revision bypasses no-progress backoff at turn end. |
 | `test/client-panel.test.mjs` | Client bundle registration, locale parity, rendered bound/unbound states. |
 | `test/manager.test.mjs` | Migration, isolation, occupancy, rebind, dispose, unbind, cold resume, restart, summary status. |
 | `test/real-backend.test.mjs` | Live app-a/app-b isolation/occupancy/restart, token migration, bounded summary wake. |
@@ -82,6 +83,9 @@ Same Host surface as v1, plus tool registration; full citations in
   occupancy.
 - Each binding also owns its summary diagnostics (`summary` record); a forbidden
   token affects only that binding and never blocks its wakes.
+- While a turn is active, SSE only marks the binding dirty; at turn end one
+  reconcile runs, and a new revision bypasses the no-progress backoff so the
+  catch-up wake is ~300ms plus request latency instead of 30s+.
 
 ## 6. Bounded summary wake (2026-10-26)
 
@@ -155,7 +159,7 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 
 | Command | Result |
 |---|---|
-| `node --test` | **115/115 pass** (live tests included while the daemon was up) |
+| `node --test` | **116/116 pass** (live tests included while the daemon was up) |
 | `node --test test/real-backend.test.mjs` | **3/3 pass** — isolation/restart, legacy-token 403 vs reissued 200, bounded 3-line summary, `inbox_view` + `inbox_update` new-summary wake |
 | `node scripts/acceptance-acp.mjs` | **all assertions passed** — S1→app-a, S2→app-b via the model tool; pushes wake only the matching session; archive S1 clears only app-a; S2 wakes again; session logs contain only their own inbox wakes; boards left clean |
 | `node scripts/privacy-scan.mjs` | **PASS** — see §10 for the final counts |
@@ -181,9 +185,9 @@ ACP artifacts in `/tmp/inbox-mosire-acp/`.
 
 ## 11. Token leakage check
 
-`scripts/privacy-scan.mjs` reads all ten local credential files and scans 46
-repository files, 3 adapter state/config/log files, 6 DSH host logs, 886 session
-logs (18 wake messages), and every adapter wake message. Result: **PASS**, 0
+`scripts/privacy-scan.mjs` reads all ten local credential files and scans 47
+repository files, 3 adapter state/config/log files, 6 DSH host logs, 891 session
+logs (26 wake messages), and every adapter wake message. Result: **PASS**, 0
 credential hits.
 Summary text is allowed only in the wake message; state and logs store
 counts/codes only. Content is excluded from the client projection and appears
