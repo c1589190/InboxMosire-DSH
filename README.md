@@ -297,7 +297,15 @@ field. `inbox_adapter_status` displays it.
 ## Rest / snooze
 
 A successful completion or archive tool may carry an optional `restSeconds`
-argument. The accepted tool names are:
+argument. The preferred generic tool is:
+
+```text
+inbox_rest
+```
+
+It is provided by Inbox's own MCP modules, so Bot programs using
+`InboxClientMcpTools` get it automatically and do not need a custom ack-schema
+change. Completion/archive tools may also carry `restSeconds`:
 
 ```text
 inbox_complete
@@ -322,9 +330,10 @@ adapter stores `restUntil` on the **calling binding only**:
 - rest is persisted with the binding and does not affect other sessions;
 - `inbox_adapter_status` shows `restUntil` / remaining seconds.
 
-The Inbox core does not interpret `restSeconds`; it is an adapter hint. The
-program's completion tool schema must accept it. For the Bot, add the optional
-field to `bot_thread_ack` in addition to `inbox_complete` / `inbox_delete`.
+The Inbox core does not interpret `restSeconds`; it is an adapter hint. Prefer
+`inbox_rest` so no downstream ack-tool schema change is required. If a custom
+completion tool wants to carry the duration itself, add the optional field to
+that tool's schema.
 
 ## Program MCP diagnostic
 

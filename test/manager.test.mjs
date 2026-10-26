@@ -368,7 +368,7 @@ test('a successful completion can rest only the calling binding, and 0 clears it
     'tools/result',
     {
       agent: { id: 'session-a' },
-      name: 'mcp__iibot__bot_thread_ack',
+      name: 'mcp__iibot__inbox_rest',
       arguments: { restSeconds: 60 },
     },
     { isError: false },
@@ -390,7 +390,7 @@ test('a successful completion can rest only the calling binding, and 0 clears it
     'tools/result',
     {
       agent: { id: 'session-a' },
-      name: 'mcp__iibot__bot_thread_ack',
+      name: 'mcp__iibot__inbox_rest',
       arguments: { restSeconds: 0 },
     },
     { isError: false },
@@ -407,7 +407,7 @@ test('rest is ignored for failed tools and unrelated tools', async (t) => {
   const failed = manager.onToolResult(
     {
       agent: { id: 'session-a' },
-      name: 'mcp__iibot__bot_thread_ack',
+      name: 'mcp__iibot__inbox_rest',
       arguments: { restSeconds: 60 },
     },
     { isError: true },

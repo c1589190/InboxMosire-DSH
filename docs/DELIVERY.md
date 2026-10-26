@@ -245,8 +245,10 @@ repository.
 
 ## v1.7 session-level rest
 
+- Preferred: the standard `inbox_rest` MCP tool accepts `restSeconds`; Bot programs
+  using `InboxClientMcpTools` get it without an ack-schema change.
 - Successful `inbox_complete`, `inbox_delete`, and `bot_thread_ack` tool results
-  may carry `restSeconds`.
+  may also carry `restSeconds`.
 - DSH sets a per-binding `restUntil`; while active it does not poll status,
   fetch summaries, or inject followups.
 - `inbox_adapter_status` displays the rest deadline and remaining seconds.

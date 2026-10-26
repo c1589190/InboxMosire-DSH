@@ -497,8 +497,8 @@ occupancy cleanup.
 
 ## v1.7 rest / snooze
 
-- A successful completion tool with `restSeconds=60` sets only the calling
-  binding's `restUntil`.
+- A successful `inbox_rest` call with `restSeconds=60` sets only the calling
+  binding's `restUntil`; successful completion tools with `restSeconds` also work.
 - During rest, pushing an item to that inbox produces no followup; the board
   remains unchanged.
 - `restSeconds=0` clears the deadline and permits one reconcile/wake.
