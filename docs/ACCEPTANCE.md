@@ -493,3 +493,14 @@ occupancy cleanup.
   `missing` state.
 - Program-MCP attachment is documented in `docs/PROGRAM-MCP-ATTACH.md`; it is a
   host connector concern, not a `BindingDescriptor` field.
+
+
+## v1.7 rest / snooze
+
+- A successful completion tool with `restSeconds=60` sets only the calling
+  binding's `restUntil`.
+- During rest, pushing an item to that inbox produces no followup; the board
+  remains unchanged.
+- `restSeconds=0` clears the deadline and permits one reconcile/wake.
+- Failed or unrelated tools do not set rest.
+- `restUntil` survives state normalization and is shown in status.

@@ -360,3 +360,97 @@ test('the manager exposes each binding summary outcome and clears it on retry', 
   assert.match(manager.statusText('session-a'), /state=forbidden/)
   assert.match(manager.statusText('session-a'), /SUMMARY_FORBIDDEN/)
 })
+
+test('a successful completion can rest only the calling binding, and 0 clears it', async (t) => {
+  const { host, serverA, manager } = await setupTwo(t)
+  const startedAt = host.now()
+  host.emit(
+    'tools/result',
+    {
+      agent: { id: 'session-a' },
+      name: 'mcp__iibot__bot_thread_ack',
+      arguments: { restSeconds: 60 },
+    },
+    { isError: false },
+  )
+  const bindingA = manager.bindingFor('session-a')
+  assert.ok(bindingA.restUntil >= startedAt + 60_000)
+  assert.equal(manager.bindingFor('session-b').restUntil ?? null, null)
+  assert.match(manager.statusText('session-a'), /rest: until=/)
+
+  serverA.push({ channel: 'ticket' })
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  assert.equal(
+    host.followups.filter((entry) => entry.agentId === 'session-a').length,
+    0,
+    'rest suppresses followup',
+  )
+
+  host.emit(
+    'tools/result',
+    {
+      agent: { id: 'session-a' },
+      name: 'mcp__iibot__bot_thread_ack',
+      arguments: { restSeconds: 0 },
+    },
+    { isError: false },
+  )
+  assert.equal(manager.bindingFor('session-a').restUntil, null)
+  await waitFor(
+    () => host.followups.some((entry) => entry.agentId === 'session-a'),
+    { label: 'wake after rest cleared' },
+  )
+})
+
+test('rest is ignored for failed tools and unrelated tools', async (t) => {
+  const { manager } = await setupTwo(t)
+  const failed = manager.onToolResult(
+    {
+      agent: { id: 'session-a' },
+      name: 'mcp__iibot__bot_thread_ack',
+      arguments: { restSeconds: 60 },
+    },
+    { isError: true },
+  )
+  assert.equal(failed, undefined)
+  const unrelated = manager.onToolResult(
+    {
+      agent: { id: 'session-a' },
+      name: 'mcp__iibot__bot_reply',
+      arguments: { restSeconds: 60 },
+    },
+    { isError: false },
+  )
+  assert.equal(unrelated, undefined)
+  assert.equal(manager.bindingFor('session-a').restUntil ?? null, null)
+})
+
+test('rest expires and wakes at most once for the latest revision', async (t) => {
+  const { host, serverA } = await setupTwo(t)
+  host.emit(
+    'tools/result',
+    {
+      agent: { id: 'session-a' },
+      name: 'mcp__iibot__inbox_complete',
+      arguments: { restSeconds: 1 },
+    },
+    { isError: false },
+  )
+  serverA.push({ channel: 'ticket', summary: 'rest expiry' })
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  assert.equal(
+    host.followups.filter((entry) => entry.agentId === 'session-a').length,
+    0,
+    'no wake before expiry',
+  )
+  await waitFor(
+    () => host.followups.filter((entry) => entry.agentId === 'session-a').length === 1,
+    { label: 'wake after rest expiry', timeoutMs: 4000 },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  assert.equal(
+    host.followups.filter((entry) => entry.agentId === 'session-a').length,
+    1,
+    'expiry produces one wake, not a loop',
+  )
+})

@@ -201,6 +201,7 @@ test('a binding summary record repairs unknown states and preserves forbidden', 
 
 test('binding wakeMode defaults to claim, persists view-ack, and rejects junk', () => {
   assert.equal(emptyBinding('session-a').wakeMode, 'claim')
+  assert.equal(emptyBinding('session-a').restUntil, null)
   const viewAck = normalizeBinding(
     {
       inboxId: 'main',
@@ -208,10 +209,12 @@ test('binding wakeMode defaults to claim, persists view-ack, and rejects junk', 
       adapterTokenRef: 'file:/tmp/wake.token',
       channels: ['qq'],
       wakeMode: 'view-ack',
+      restUntil: 1893456000000,
     },
     'session-a',
   )
   assert.equal(viewAck.wakeMode, 'view-ack')
+  assert.equal(viewAck.restUntil, 1893456000000)
   const junk = normalizeBinding(
     {
       inboxId: 'main',

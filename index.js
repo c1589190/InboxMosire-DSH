@@ -38,6 +38,7 @@ export function wireHostEvents(ctx, manager) {
   ctx.on('agent/status', (payload) => manager.onAgentStatus(payload))
   ctx.on('session/event', (session, event) => manager.onSessionEvent(session, event))
   ctx.on('workspace/session-stop', (request) => manager.onSessionStop(request))
+  ctx.on('tools/result', (exec, result) => manager.onToolResult(exec, result))
 }
 
 /**

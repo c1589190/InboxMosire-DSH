@@ -241,3 +241,16 @@ repository.
 - Test status: `node --test` has 121 tests; with the clean daemon/occupancy it
   passed 121/121 here. Live tests must be run only when the target daemon and
   occupancy are isolated.
+
+
+## v1.7 session-level rest
+
+- Successful `inbox_complete`, `inbox_delete`, and `bot_thread_ack` tool results
+  may carry `restSeconds`.
+- DSH sets a per-binding `restUntil`; while active it does not poll status,
+  fetch summaries, or inject followups.
+- `inbox_adapter_status` displays the rest deadline and remaining seconds.
+- `restSeconds: 0` clears rest; max is 86400 seconds.
+- Rest is adapter state and does not mute the Inbox board for other sessions.
+- Bot must add the optional `restSeconds` field to its `bot_thread_ack` schema;
+  Inbox's own `inbox_complete` / `inbox_delete` MCP schemas already accept it.

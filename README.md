@@ -294,6 +294,38 @@ not change Inbox core semantics: claimed items still require complete/release.
 The mode is DSH-local binding state (`wakeMode`), not a `BindingDescriptor`
 field. `inbox_adapter_status` displays it.
 
+## Rest / snooze
+
+A successful completion or archive tool may carry an optional `restSeconds`
+argument. The accepted tool names are:
+
+```text
+inbox_complete
+inbox_delete
+bot_thread_ack
+```
+
+and their MCP-prefixed forms. When the tool result is successful, the DSH
+adapter stores `restUntil` on the **calling binding only**:
+
+```json
+{"restSeconds": 60}
+```
+
+- `restSeconds > 0`: suppress new inbox status/summary/followup delivery for
+  that binding until the deadline;
+- `restSeconds: 0`: clear the rest immediately;
+- max: 86400 seconds;
+- the Inbox board is untouched; items remain available;
+- at deadline the adapter reconciles once and wakes at most once for the latest
+  revision;
+- rest is persisted with the binding and does not affect other sessions;
+- `inbox_adapter_status` shows `restUntil` / remaining seconds.
+
+The Inbox core does not interpret `restSeconds`; it is an adapter hint. The
+program's completion tool schema must accept it. For the Bot, add the optional
+field to `bot_thread_ack` in addition to `inbox_complete` / `inbox_delete`.
+
 ## Program MCP diagnostic
 
 The adapter never injects or calls business tools. At each wake it asks the live
@@ -322,7 +354,7 @@ does not need a new wake just to clear a stale `missing` state.
 ## Testing and acceptance
 
 ```bash
-node --test                        # 120 tests (unit + live; live skips when the daemon is down)
+node --test                        # 124 tests (unit + live; live skips when the daemon is down)
 node --test test/real-backend.test.mjs   # live app-a/app-b isolation, summary wake, token migration
 node scripts/acceptance-acp.mjs    # real DSH host, two ACP sessions
 node scripts/privacy-scan.mjs      # credentials across repo/state/logs/sessions
