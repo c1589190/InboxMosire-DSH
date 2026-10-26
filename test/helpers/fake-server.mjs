@@ -31,13 +31,19 @@ export async function startFakeInbox({
   const requests = []
   const connections = []
   const occupancyCalls = []
+  const itemsCalls = []
+  const availableItems = []
+  const claimedItems = []
+  const itemsModes = new Set()
   let occupant = null
   let occupiedAt = null
   let seq = 0
+  let itemSeq = 0
   let authMode = 'ok'
   let invalidCursor = false
   let silent = false
   let holdStatus = false
+  let holdItems = false
   let closed = false
 
   /**
@@ -124,18 +130,34 @@ export async function startFakeInbox({
    * Push one notification (producer path).
    * @param {object} [input] - push fields.
    * @param {string} [input.channel] - channel id.
-   * @param {string} [input.title] - must never reach the adapter.
-   * @param {object} [input.payload] - must never reach the adapter.
-   * @returns {{revision: number}} resulting revision.
+   * @param {string} [input.kind] - item kind.
+   * @param {string} [input.title] - item title (untrusted text).
+   * @param {object} [input.payload] - must never reach the adapter summary.
+   * @returns {{revision: number, itemId: string}} resulting revision.
    */
-  function push({ channel = 'ticket', title = 'SECRET-TITLE', payload = { body: 'SECRET-BODY' } } = {}) {
-    void title
+  function push({
+    channel = 'ticket',
+    kind = 'reply',
+    title = 'SECRET-TITLE',
+    payload = { body: 'SECRET-BODY' },
+  } = {}) {
     void payload
+    itemSeq += 1
+    const itemId = `itm_fake_${itemSeq}`
+    availableItems.push({
+      itemId,
+      channel,
+      kind,
+      title,
+      priority: 0,
+      attempts: 0,
+      createdAt: new Date().toISOString(),
+    })
     state.revision += 1
     counter(channel).available += 1
     state.available += 1
     publish([channel])
-    return { revision: state.revision }
+    return { revision: state.revision, itemId }
   }
 
   /**
@@ -147,6 +169,14 @@ export async function startFakeInbox({
   function claim(channel, count) {
     const counts = counter(channel)
     const moved = Math.min(count, counts.available)
+    const moving = availableItems
+      .filter((item) => item.channel === channel)
+      .slice(0, moved)
+    for (const item of moving) {
+      const index = availableItems.indexOf(item)
+      if (index >= 0) availableItems.splice(index, 1)
+      claimedItems.push(item)
+    }
     counts.available -= moved
     counts.claimed += moved
     state.available -= moved
@@ -167,6 +197,12 @@ export async function startFakeInbox({
   function complete(channel, count) {
     const counts = counter(channel)
     const moved = Math.min(count, counts.claimed)
+    let remaining = moved
+    for (let index = claimedItems.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      if (claimedItems[index].channel !== channel) continue
+      claimedItems.splice(index, 1)
+      remaining -= 1
+    }
     counts.claimed -= moved
     state.claimed -= moved
     if (moved > 0) {
@@ -185,6 +221,12 @@ export async function startFakeInbox({
   function release(channel, count) {
     const counts = counter(channel)
     const moved = Math.min(count, counts.claimed)
+    let remaining = moved
+    for (let index = claimedItems.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      if (claimedItems[index].channel !== channel) continue
+      availableItems.push(...claimedItems.splice(index, 1))
+      remaining -= 1
+    }
     counts.claimed -= moved
     counts.available += moved
     state.claimed -= moved
@@ -248,7 +290,7 @@ export async function startFakeInbox({
       return
     }
 
-    const match = url.pathname.match(/^\/v1\/inboxes\/([^/]+)\/(status|events|occupancy)$/)
+    const match = url.pathname.match(/^\/v1\/inboxes\/([^/]+)\/(status|events|occupancy|items)$/)
     if (!match || decodeURIComponent(match[1]) !== inbox) {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'inbox not found' } }))
@@ -287,6 +329,50 @@ export async function startFakeInbox({
       }
       res.writeHead(405, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { code: 'METHOD_NOT_ALLOWED', message: 'occupancy' } }))
+      return
+    }
+
+    if (match[2] === 'items') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'METHOD_NOT_ALLOWED', message: 'items' } }))
+        return
+      }
+      const filter = url.searchParams.getAll('channel')
+      const rawLimit = url.searchParams.get('limit')
+      itemsCalls.push({ search: url.search, channels: filter, limit: rawLimit, at: Date.now() })
+      if (holdItems) return
+      if (itemsModes.has('403')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          error: { code: 'FORBIDDEN', message: 'token 缺少 scope: items:read' },
+        }))
+        return
+      }
+      if (itemsModes.has('500')) {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'INTERNAL', message: 'items failed' } }))
+        return
+      }
+      if (itemsModes.has('malformed')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ inbox, count: 'many', items: 'not-an-array' }))
+        return
+      }
+      const limit = rawLimit === null ? 50 : Number(rawLimit)
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'INVALID_ARGUMENT', message: 'limit 必须在 1..100' } }))
+        return
+      }
+      const visible = availableItems
+        .filter((item) => filter.length === 0 || filter.includes(item.channel))
+        .slice(0, limit)
+        .map((item) => (itemsModes.has('payload')
+          ? { ...item, payload: { body: 'SECRET-BODY' }, payloadRef: '/secret/ref' }
+          : item))
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ inbox, count: visible.length, items: visible }))
       return
     }
 
@@ -351,6 +437,7 @@ export async function startFakeInbox({
     requests,
     connections,
     occupancyCalls,
+    itemsCalls,
     push,
     claim,
     complete,
@@ -379,6 +466,22 @@ export async function startFakeInbox({
     setHoldStatus(value) {
       holdStatus = value
     },
+    /** Hang item-summary requests instead of answering them. */
+    setHoldItems(value) {
+      holdItems = value
+    },
+    /** Inject one or more `/items` failure modes: 403, 500, malformed, payload. */
+    setItemsMode(...modes) {
+      itemsModes.clear()
+      for (const mode of modes.flat()) {
+        if (mode === 'ok') continue
+        itemsModes.add(mode)
+      }
+    },
+    /** Available item summaries, in push order. */
+    availableItems,
+    /** Claimed item summaries, in claim order. */
+    claimedItems,
     /** Number of live SSE connections. */
     get connectionCount() {
       return clients.size

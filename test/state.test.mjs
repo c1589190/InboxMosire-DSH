@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { STATE_VERSION, StateStore, emptyState, normalizeState } from '../lib/state.js'
+import { emptyBinding, normalizeBinding } from '../lib/state.js'
 
 const EXPECTED = { inboxId: 'main', channels: ['ticket'] }
 
@@ -126,4 +127,59 @@ test('a corrupt JSON document reports a readable error and stays intact', async 
   await writeFile(file, '{ not json', 'utf8')
   await assert.rejects(() => new StateStore({ file }).load(EXPECTED), /不是 JSON/)
   assert.equal(await readFile(file, 'utf8'), '{ not json')
+})
+
+test('summary diagnostics persist only bounded counts and codes, never item text', () => {
+  const { state } = normalizeState(
+    {
+      version: 1,
+      inboxId: 'main',
+      summary: {
+        state: 'ok',
+        at: '2026-10-26T00:00:00.000Z',
+        shown: 2,
+        remaining: 1,
+        code: null,
+        message: 'bounded',
+        title: 'SECRET-TITLE',
+        items: [{ itemId: 'itm_1', title: 'SECRET-TITLE' }],
+      },
+    },
+    EXPECTED,
+  )
+  assert.deepEqual(state.summary, {
+    state: 'ok',
+    at: '2026-10-26T00:00:00.000Z',
+    shown: 2,
+    remaining: 1,
+    code: null,
+    message: 'bounded',
+  })
+  assert.ok(!JSON.stringify(state).includes('SECRET-TITLE'))
+  assert.equal(emptyState(EXPECTED).summary.state, 'unknown')
+})
+
+test('a binding summary record repairs unknown states and preserves forbidden', () => {
+  const base = normalizeBinding({}, 'session-a')
+  assert.equal(base.summary.state, 'unknown')
+  const forbidden = normalizeBinding(
+    {
+      summary: {
+        state: 'forbidden',
+        shown: 'x',
+        remaining: -2,
+        code: 'SUMMARY_FORBIDDEN',
+        message: 'token 缺少 items:read',
+      },
+    },
+    'session-a',
+  )
+  assert.equal(forbidden.summary.state, 'forbidden')
+  assert.equal(forbidden.summary.code, 'SUMMARY_FORBIDDEN')
+  assert.equal(forbidden.summary.shown, 0)
+  assert.equal(forbidden.summary.remaining, 0)
+  const junk = normalizeBinding({ summary: { state: 'made-up', at: 42 } }, 'session-a')
+  assert.equal(junk.summary.state, 'unknown')
+  assert.equal(junk.summary.at, null)
+  assert.equal(emptyBinding('session-a').summary.state, 'unknown')
 })

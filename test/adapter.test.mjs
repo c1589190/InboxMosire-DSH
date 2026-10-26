@@ -38,10 +38,10 @@ test('an empty board never wakes the session', async (t) => {
   assert.equal(adapter.snapshot().health.sse, 'connected')
 })
 
-test('one push wakes an idle session exactly once with the fixed template', async (t) => {
+test('one push wakes an idle session exactly once with a bounded summary', async (t) => {
   const { server, host, adapter } = await setup(t)
   await waitFor(() => server.connectionCount === 1, { label: 'SSE connection' })
-  server.push({ channel: 'ticket' })
+  server.push({ channel: 'ticket', title: '工单更新' })
   await waitFor(() => host.followups.length === 1, { label: 'first wake' })
   const { message } = host.followups[0]
   assert.equal(message.role, 'user')
@@ -54,6 +54,20 @@ test('one push wakes an idle session exactly once with the fixed template', asyn
         revision: 1,
         available: 1,
         channels: ['ticket'],
+        summary: {
+          items: [
+            {
+              itemId: 'itm_fake_1',
+              channel: 'ticket',
+              kind: 'reply',
+              title: '工单更新',
+            },
+          ],
+          remaining: 0,
+          maxItems: 3,
+          maxTitleChars: 80,
+          maxTotalChars: 600,
+        },
       }),
     },
   ])
@@ -338,12 +352,12 @@ test('auto-binding adopts the session created after startup', async (t) => {
   await waitFor(() => host.followups.length === 1, { label: 'wake for auto-bound session' })
 })
 
-test('PRIVACY: wake text, state, and log never contain item content or the token', async (t) => {
+test('PRIVACY: summaries carry no payload and no artifact carries the token', async (t) => {
   const { server, host, adapter } = await setup(t)
   await waitFor(() => server.connectionCount === 1, { label: 'SSE connection' })
   server.push({
     channel: 'ticket',
-    title: 'SECRET-TITLE-42',
+    title: 'PUBLIC-SUMMARY-TITLE-42',
     payload: { body: 'SECRET-BODY-42', payloadRef: '/secret/ref' },
   })
   await waitFor(() => host.followups.length === 1, { label: 'wake' })
@@ -353,11 +367,14 @@ test('PRIVACY: wake text, state, and log never contain item content or the token
   const stateText = await readFile(adapter.config.stateFile, 'utf8')
   const logText = await readFile(adapter.config.logFile, 'utf8')
   const loggerText = host.logs.map((line) => line.message).join('\n')
+  assert.match(texts, /PUBLIC-SUMMARY-TITLE-42/, 'the bounded title is part of the summary')
   for (const haystack of [texts, stateText, logText, loggerText]) {
-    assert.ok(!haystack.includes('SECRET-TITLE-42'))
     assert.ok(!haystack.includes('SECRET-BODY-42'))
     assert.ok(!haystack.includes('/secret/ref'))
     assert.ok(!haystack.includes('test-token'))
+  }
+  for (const haystack of [stateText, logText, loggerText]) {
+    assert.ok(!haystack.includes('PUBLIC-SUMMARY-TITLE-42'), 'state and logs never store titles')
   }
 })
 

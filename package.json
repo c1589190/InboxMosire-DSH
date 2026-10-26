@@ -1,9 +1,9 @@
 {
   "name": "@mosire/dsh-inbox-mosire",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "InboxMosire v2 multi-binding wake adapter for DeepSeek Harness: one binding per session, descriptor-based bind/unbind tools, per-binding SSE/cursor/wake isolation, and advisory occupancy.",
+  "description": "InboxMosire v2 multi-binding wake adapter for DeepSeek Harness: per-session bindings, bounded summary wakes, per-binding SSE/cursor/wake isolation, and advisory occupancy.",
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json",

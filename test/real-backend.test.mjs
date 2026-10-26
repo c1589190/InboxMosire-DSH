@@ -21,6 +21,7 @@ const DESCRIPTOR_A = process.env.INBOX_APP_A_BINDING ?? `${LIVE}/bindings/app-a.
 const DESCRIPTOR_B = process.env.INBOX_APP_B_BINDING ?? `${LIVE}/bindings/app-b.json`
 const PROGRAM_A = process.env.INBOX_APP_A_PROGRAM_MCP_TOKEN_FILE ?? `${LIVE}/secrets/program-a-mcp.token`
 const PROGRAM_B = process.env.INBOX_APP_B_PROGRAM_MCP_TOKEN_FILE ?? `${LIVE}/secrets/program-b-mcp.token`
+const LEGACY_WAKE = process.env.INBOX_APP_A_LEGACY_WAKE_TOKEN_FILE ?? `${LIVE}/secrets/dsh-session-app-a-wake.legacy.token`
 
 /**
  * Probe the daemon.
@@ -154,8 +155,12 @@ test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', {
   const wakeTextB = host.followups.find((entry) => entry.agentId === 'session-b').message.content[0].text
   assert.match(wakeTextA, new RegExp(`inbox=app-a revision=${pushedA.revision}`))
   assert.match(wakeTextB, new RegExp(`inbox=app-b revision=${pushedB.revision}`))
-  assert.ok(!wakeTextA.includes('v2-isolation-a'))
+  assert.match(wakeTextA, /"title":"v2-isolation-a"/)
+  assert.match(wakeTextB, /"title":"v2-isolation-b"/)
+  assert.ok(!wakeTextA.includes('v2-isolation-b'))
   assert.ok(!wakeTextA.includes('app-b'))
+  assert.ok(!wakeTextA.includes('"payload"'))
+  assert.ok(!wakeTextA.includes('"side"'))
   assert.ok(!wakeTextB.includes('app-a'))
 
   const occupancyA = await call('/v1/inboxes/app-a/occupancy', { token: wakeA })
@@ -239,4 +244,81 @@ test('v2 live: two sessions, two inboxes, isolated wakes, occupancy, restart', {
   assert.equal(occupancyBAfter.json.occupied, false)
   await drain('app-a', programA)
   await drain('app-b', programB)
+})
+
+test('v2 live summary: old token is rejected by /items, the reissued token is accepted', { skip: SKIP || !existsSync(LEGACY_WAKE) }, async () => {
+  const legacy = (await readFile(LEGACY_WAKE, 'utf8')).trim()
+  const legacyStatus = await call('/v1/inboxes/app-a/status', { token: legacy })
+  assert.equal(legacyStatus.status, 200, 'the legacy token is still a valid status/wake token')
+  const legacyItems = await call('/v1/inboxes/app-a/items?limit=3', { token: legacy })
+  assert.equal(legacyItems.status, 403, 'the legacy token lacks items:read')
+  assert.equal(legacyItems.json.error.code, 'FORBIDDEN')
+
+  const freshItems = await call('/v1/inboxes/app-a/items?limit=3', { token: wakeA })
+  assert.equal(freshItems.status, 200, 'the reissued wake token has items:read')
+  assert.ok(Array.isArray(freshItems.json.items))
+  for (const item of freshItems.json.items) {
+    assert.ok(!('payload' in item), 'summary responses never carry payload')
+    assert.ok(!('payloadRef' in item), 'summary responses never carry payloadRef')
+  }
+})
+
+test('v2 live summary: three bounded JSON lines, sanitized title, remaining count', { skip: SKIP }, async (t) => {
+  await drain('app-a', programA)
+  await drain('app-b', programB)
+  const first = await push('app-a', programA, {
+    title: 'line "one"\nnext\tline',
+    payload: { secret: 'LIVE_SECRET_SUMMARY_A' },
+  })
+  await push('app-a', programA, { title: 'summary-two', payload: { secret: 'LIVE_SECRET_SUMMARY_A' } })
+  await push('app-a', programA, { title: 'summary-three', payload: { secret: 'LIVE_SECRET_SUMMARY_A' } })
+  const fourth = await push('app-a', programA, {
+    title: 'summary-four',
+    payload: { secret: 'LIVE_SECRET_SUMMARY_A' },
+  })
+
+  const host = createFakeHost()
+  host.createAgent('session-summary')
+  const created = await createTestManager({ host })
+  t.after(() => created.manager.stop())
+  await created.manager.start()
+  const bound = await created.manager.bind({
+    sessionId: 'session-summary',
+    descriptor: descriptorA,
+  })
+  assert.equal(bound.ok, true, bound.message)
+
+  await waitFor(() => host.followups.length === 1, {
+    label: 'summary wake',
+    timeoutMs: 8000,
+  })
+  const text = host.followups[0].message.content[0].text
+  assert.match(text, new RegExp(`revision=${fourth.revision}`))
+  assert.match(text, /available=4/)
+  const lines = text.split('\n').filter((row) => row.startsWith('- {"itemId"'))
+  assert.equal(lines.length, 3, 'at most summaryMaxItems item lines')
+  assert.match(text, /- 还有 1 条未展示/)
+  for (const row of lines) {
+    const item = JSON.parse(row.slice(2))
+    assert.deepEqual(Object.keys(item), ['itemId', 'channel', 'kind', 'title'])
+    assert.match(item.itemId, /^itm_/)
+    assert.equal(item.channel, 'ticket')
+    assert.equal(item.kind, 'acceptance')
+  }
+  const titles = lines.map((row) => JSON.parse(row.slice(2)).title)
+  assert.ok(titles.includes('line "one" next line'), `sanitized title in ${JSON.stringify(titles)}`)
+  assert.ok(!text.includes('LIVE_SECRET_SUMMARY_A'))
+  assert.ok(!text.includes('"payload"'))
+  assert.ok(!text.includes('clm_'))
+
+  host.endTurn(host.agents.get('session-summary'))
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.equal(host.followups.length, 1, 'the same revision is not woken twice')
+  assert.equal(created.manager.bindingFor('session-summary').summary.state, 'ok')
+  assert.equal(created.manager.bindingFor('session-summary').summary.shown, 3)
+  assert.equal(created.manager.bindingFor('session-summary').summary.remaining, 1)
+  await created.manager.unbind('session-summary')
+  await drain('app-a', programA)
+  await drain('app-b', programB)
+  assert.ok(first.itemId)
 })

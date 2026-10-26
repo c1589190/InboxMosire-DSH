@@ -28,6 +28,11 @@ const SECRET_FILES = [
   'producer-main.token',
   'smoke-producer.token',
   'smoke-verify.token',
+  'dsh-session-app-a-wake.token',
+  'dsh-session-app-b-wake.token',
+  'dsh-session-app-a-wake.legacy.token',
+  'program-a-mcp.token',
+  'program-b-mcp.token',
 ]
 const CONTENT_MARKERS = [
   'SECRET-TITLE',

@@ -112,7 +112,8 @@ test('two bindings wake only their own session and mark occupancy', async (t) =>
   assert.equal(host.followups.filter((entry) => entry.agentId === 'session-b').length, 0, 'B is not woken by A')
   const wakeA = host.followups.find((entry) => entry.agentId === 'session-a')
   assert.match(wakeA.message.content[0].text, /inbox=app-a revision=1 available=1/)
-  assert.match(wakeA.message.content[0].text, /请使用你的程序 MCP 的 inbox_list/)
+  assert.match(wakeA.message.content[0].text, /如果摘要不足，再调用 inbox_list/)
+  assert.match(wakeA.message.content[0].text, /"itemId":"itm_fake_1"/)
 
   host.endTurn(host.agents.get('session-a'))
   serverB.push({ channel: 'ticket' })
@@ -330,4 +331,32 @@ test('the v2 document is versioned and keeps the legacy snapshot', async (t) => 
     'a legacy binding with an unreadable token fails closed',
   )
   assert.ok(dir)
+})
+
+test('the manager exposes each binding summary outcome and clears it on retry', async (t) => {
+  const { host, serverA, manager } = await setupTwo(t)
+  serverA.push({ channel: 'ticket', title: 'A-SUMMARY' })
+  await waitFor(() => manager.bindingFor('session-a').summary?.state === 'ok', {
+    label: 'A summary ok',
+  })
+  const binding = manager.bindingFor('session-a')
+  assert.equal(binding.summary.shown, 1)
+  assert.equal(binding.summary.remaining, 0)
+  const text = manager.statusText('session-a')
+  assert.match(text, /summary: enabled=true maxItems=3/)
+  assert.match(text, /state=ok shown=1/)
+  assert.match(text, /summary=ok/)
+
+  await manager.retry('session-a')
+  assert.equal(manager.bindingFor('session-a').summary.state, 'unknown')
+  await waitFor(() => manager.engines.has('session-a'), { label: 'A engine restarted' })
+  serverA.setItemsMode('403')
+  host.endTurn(host.agents.get('session-a'))
+  serverA.push({ channel: 'ticket', title: 'A-FORBIDDEN' })
+  await waitFor(() => manager.bindingFor('session-a').summary?.state === 'forbidden', {
+    label: 'A summary forbidden',
+  })
+  assert.equal(manager.bindingFor('session-a').summary.code, 'SUMMARY_FORBIDDEN')
+  assert.match(manager.statusText('session-a'), /state=forbidden/)
+  assert.match(manager.statusText('session-a'), /SUMMARY_FORBIDDEN/)
 })

@@ -92,7 +92,7 @@ export function apply(ctx) {
   register({
     name: 'inbox_adapter_status',
     description:
-      'Read the InboxMosire v2 adapter state: whether the calling session is bound, its inbox/cursor/SSE/occupancy/last wake/config error, and a summary of every other binding in this DSH host. Read-only. Never returns a token.',
+      'Read the InboxMosire v2 adapter state: whether the calling session is bound, its inbox/cursor/SSE/occupancy/summary result/last wake/config error, and a summary of every other binding in this DSH host. Read-only. Never returns a token.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: OUTPUT,
     execute: async (_args, exec) => {
