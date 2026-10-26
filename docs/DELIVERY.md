@@ -139,9 +139,11 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 ## 8. Program MCP diagnostic
 
 - `InboxAdapter.recordProgramMcp` asks the live agent's tool schema whether
-  `inbox_claim`/`inbox_list` is visible (including MCP-prefixed names), stores
-  `health.programMcp`, and adds a warning to the wake only when it is
-  `missing`; the wake is still delivered.
+  `inbox_claim`/`inbox_list`/`inbox_view` is visible (including MCP-prefixed
+  names), stores `health.programMcp`, and adds a warning to the wake only when
+  it is `missing`; the wake is still delivered.
+- `inbox_adapter_status` re-probes the caller's schema so a stale `missing`
+  diagnostic can clear without waiting for a new wake.
 - `state.js` persists only `{state, at}` for `programMcp`; `manager.panelStatus`
   exposes the state and `/inbox status` prints it. The Client strip shows
   `程序 MCP 未挂载` when missing.
@@ -195,3 +197,20 @@ only in a program's own view/claim path. Per-binding tokens are loaded from thei
 `file:` refs, used only in the `Authorization` header, registered with the
 redacting logger, and never written to state, logs, wake messages, or the
 repository.
+
+## v1.6 wakeMode and program-MCP attachment
+
+- `inbox_adapter_bind` now accepts DSH-local `wakeMode: claim|view-ack`.
+  `view-ack` never puts `inbox_claim` in the wake instructions, for programs that
+  use `inbox_list` / `inbox_view` and archive via their own ack path.
+- `wakeMode` is persisted per binding and is not part of `BindingDescriptor`.
+- Program-MCP detection now accepts `inbox_claim`, `inbox_list`, and
+  `inbox_view`, including MCP-prefixed names.
+- `inbox_adapter_status` re-probes the caller's tool schema instead of waiting
+  for another wake, so a stale `programMcp=missing` can be cleared after the
+  connector is attached.
+- See `docs/PROGRAM-MCP-ATTACH.md` for connector scope/URL/Bearer setup. The
+  adapter still does not auto-attach or call business tools.
+- Test status: `node --test` has 120 tests; with the live daemon probe disabled,
+  117 pass and 3 live real-backend tests skip. The live test must be run only
+  when the target daemon and occupancy are isolated.

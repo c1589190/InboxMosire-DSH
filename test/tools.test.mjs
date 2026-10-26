@@ -67,6 +67,7 @@ test('the tool row registers v2 status, bind, and unbind', async (t) => {
   assert.ok(bind.parameters.properties.inboxId)
   assert.ok(bind.parameters.properties.adapterTokenRef)
   assert.ok(bind.parameters.properties.descriptor)
+  assert.deepEqual(bind.parameters.properties.wakeMode.enum, ['claim', 'view-ack'])
 })
 
 test('inbox_adapter_bind accepts explicit fields and reports per-caller status', async (t) => {
@@ -79,19 +80,44 @@ test('inbox_adapter_bind accepts explicit fields and reports per-caller status',
       apiBaseUrl: serverA.url,
       channels: ['ticket'],
       label: 'S-test',
+      wakeMode: 'view-ack',
     },
     { agent: { id: 'session-test' }, signal: SIGNAL },
   )
   assert.match(result.text, /已绑定 session-test → app-a/)
   assert.match(result.text, /isBound=true inbox=app-a/)
   assert.match(result.text, /channels=\[ticket\]/)
+  assert.match(result.text, /wakeMode=view-ack/)
   await waitFor(() => serverA.connectionCount === 1, { label: 'SSE' })
 
   const status = tool(host, 'inbox_adapter_status')
+  const self = await status.execute({}, { agent: { id: 'session-test' }, signal: SIGNAL })
+  assert.match(self.text, /programMcp: state=available/)
+  host.businessTools = false
+  const refreshed = await status.execute({}, { agent: { id: 'session-test' }, signal: SIGNAL })
+  assert.match(refreshed.text, /programMcp: state=missing/)
+  host.businessTools = true
+
   const other = await status.execute({}, { agent: { id: 'session-other' }, signal: SIGNAL })
   assert.match(other.text, /isBound=false/)
   assert.match(other.text, /session-test → app-a/)
   assert.ok(!other.text.includes('test-token'))
+})
+
+test('inbox_adapter_bind rejects an unknown wakeMode', async (t) => {
+  const { host, serverA, descA } = await setup(t)
+  const bind = tool(host, 'inbox_adapter_bind')
+  const result = await bind.execute(
+    {
+      inboxId: 'app-a',
+      adapterTokenRef: descA.adapterTokenRef,
+      apiBaseUrl: serverA.url,
+      wakeMode: 'make-believe',
+    },
+    { agent: { id: 'session-test' }, signal: SIGNAL },
+  )
+  assert.match(result.text, /WAKE_MODE_INVALID/)
+  assert.equal(serverA.connectionCount, 0)
 })
 
 test('the descriptor object binds a different session without touching the caller', async (t) => {

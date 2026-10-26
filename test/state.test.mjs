@@ -197,3 +197,29 @@ test('a binding summary record repairs unknown states and preserves forbidden', 
   )
   assert.deepEqual(junkProgram.health.programMcp, { state: 'unknown', at: null })
 })
+
+
+test('binding wakeMode defaults to claim, persists view-ack, and rejects junk', () => {
+  assert.equal(emptyBinding('session-a').wakeMode, 'claim')
+  const viewAck = normalizeBinding(
+    {
+      inboxId: 'main',
+      apiBaseUrl: 'http://127.0.0.1:18765',
+      adapterTokenRef: 'file:/tmp/wake.token',
+      channels: ['qq'],
+      wakeMode: 'view-ack',
+    },
+    'session-a',
+  )
+  assert.equal(viewAck.wakeMode, 'view-ack')
+  const junk = normalizeBinding(
+    {
+      inboxId: 'main',
+      apiBaseUrl: 'http://127.0.0.1:18765',
+      adapterTokenRef: 'file:/tmp/wake.token',
+      wakeMode: 'make-believe',
+    },
+    'session-b',
+  )
+  assert.equal(junk.wakeMode, 'claim')
+})

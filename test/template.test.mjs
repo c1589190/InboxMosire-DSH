@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  VIEW_ACK_BODY,
+  VIEW_ACK_SUMMARY_BODY,
   WAKE_BODY,
   buildWakeMessage,
   renderWakeTemplate,
@@ -84,4 +86,31 @@ test('wake message is an immutable user message with an adapter-owned source', (
   assert.ok(Object.isFrozen(message))
   assert.ok(Object.isFrozen(message.content))
   assert.ok(Object.isFrozen(message.content[0]))
+})
+
+
+test('view-ack wake mode never instructs the agent to claim', () => {
+  const text = renderWakeTemplate({
+    inboxId: 'iibot-bot-sim',
+    revision: 7,
+    available: 1,
+    channels: ['qq'],
+    summary: {
+      items: [
+        { itemId: 'itm_1', channel: 'qq', kind: 'digest', summary: '群聊更新' },
+      ],
+      remaining: 0,
+      maxItems: 3,
+      maxTitleChars: 80,
+      maxTotalChars: 600,
+    },
+    programMcpMissing: true,
+    wakeMode: 'view-ack',
+  })
+  assert.ok(!text.includes('inbox_claim'))
+  assert.match(text, /inbox_list \/ inbox_view/)
+  assert.match(text, /处理时以通知板为准/)
+  assert.ok(!text.includes('claim 时以通知板为准'))
+  assert.equal(VIEW_ACK_SUMMARY_BODY.includes('inbox_claim'), false)
+  assert.equal(VIEW_ACK_BODY.includes('inbox_claim'), false)
 })

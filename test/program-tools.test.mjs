@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { renderWakeTemplate } from '../lib/template.js'
+import { hasBusinessTools, isBusinessToolName } from '../lib/program-mcp.js'
 import {
   createFakeHost,
   createTestAdapter,
@@ -29,7 +30,7 @@ test('a wake without a program MCP warns before the fixed instructions', () => {
   const instructionIndex = text.indexOf('请直接通过你的程序 MCP')
   assert.ok(warningIndex > 0, text)
   assert.ok(instructionIndex > warningIndex, 'the warning comes before the instructions')
-  assert.ok(text.includes('inbox_claim/inbox_list'))
+  assert.ok(text.includes('inbox_list/inbox_view'))
 })
 
 test('adapter records programMcp=missing and warns without blocking the wake', async (t) => {
@@ -67,4 +68,20 @@ test('adapter records programMcp=available and omits the warning', async (t) => 
   const text = host.followups[0].message.content[0].text
   assert.ok(!text.includes('未检测到程序 MCP'))
   assert.equal(created.adapter.snapshot().programMcp.state, 'available')
+})
+
+
+test('program-MCP detection accepts prefixed inbox_view without inbox_claim', () => {
+  assert.equal(isBusinessToolName('inbox_view'), true)
+  assert.equal(isBusinessToolName('mcp__iibot__inbox_view'), true)
+  assert.equal(isBusinessToolName('mcp__iibot__inbox_claim'), true)
+  assert.equal(isBusinessToolName('mcp__iibot__bot_reply'), false)
+  const agent = {
+    ctx: {
+      tools: {
+        schemas: () => [{ name: 'mcp__iibot__inbox_view' }, { name: 'bot_reply' }],
+      },
+    },
+  }
+  assert.equal(hasBusinessTools(agent), true)
 })

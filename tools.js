@@ -97,6 +97,7 @@ export function apply(ctx) {
     output: OUTPUT,
     execute: async (_args, exec) => {
       const live = await manager()
+      await live.refreshProgramMcp?.(exec.agent?.id)
       return { text: live.statusText(exec.agent?.id) }
     },
   })
@@ -127,6 +128,12 @@ export function apply(ctx) {
           description: 'Optional channel filter (empty means all channels).',
         },
         label: { type: 'string', description: 'Optional human label.' },
+        wakeMode: {
+          type: 'string',
+          enum: ['claim', 'view-ack'],
+          description:
+            'Processing lifecycle used in the wake instructions: claim for claim-based programs, view-ack for programs that view and archive without claiming. Defaults to claim.',
+        },
         descriptor: {
           type: 'object',
           description: 'Optional full descriptor object (overrides the explicit fields).',
@@ -142,7 +149,11 @@ export function apply(ctx) {
         args && typeof args.sessionId === 'string' && args.sessionId.trim() !== ''
           ? args.sessionId.trim()
           : String(exec.agent?.id ?? '')
-      const result = await live.bind({ sessionId: target, descriptor })
+      const result = await live.bind({
+        sessionId: target,
+        descriptor,
+        wakeMode: args && typeof args.wakeMode === 'string' ? args.wakeMode : undefined,
+      })
       return { text: `${result.message}\n\n${result.status}` }
     },
   })

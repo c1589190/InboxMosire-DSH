@@ -418,3 +418,16 @@ occupancy cleanup.
   wake message still told the model to use its program MCP, which is the
   intended production shape.
 - `app-a`/`app-b` are left with `available=0`, `occupied=false` after the run.
+
+## v1.6 no-claim and program-MCP diagnostics
+
+- `wakeMode=view-ack` wake text contains no `inbox_claim`; the fixed body uses
+  `inbox_list` / `inbox_view`.
+- `wakeMode=claim` remains the default and preserves the previous wake body.
+- `hasBusinessTools` recognizes `mcp__<server>__inbox_view` even when no claim
+  tool is exposed.
+- `inbox_adapter_status` refreshes `programMcp` from the caller's current tool
+  schema; it is no longer necessary to wait for a new wake to clear a stale
+  `missing` state.
+- Program-MCP attachment is documented in `docs/PROGRAM-MCP-ATTACH.md`; it is a
+  host connector concern, not a `BindingDescriptor` field.

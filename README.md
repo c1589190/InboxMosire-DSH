@@ -70,7 +70,7 @@ Model-facing tools (both rows are hot-reloadable independently):
 
 | Tool | Arguments | Effect |
 |---|---|---|
-| `inbox_adapter_bind` | `sessionId?`, `inboxId`, `adapterTokenRef`, `apiBaseUrl?`, `channels?`, `label?`, `descriptor?` | bind one session (default: caller); same inbox keeps cursor/watermark, a different inbox resets them |
+| `inbox_adapter_bind` | `sessionId?`, `inboxId`, `adapterTokenRef`, `apiBaseUrl?`, `channels?`, `label?`, `descriptor?`, `wakeMode?` | bind one session (default: caller); `wakeMode=claim` (default) or `view-ack`; same inbox keeps cursor/watermark, a different inbox resets them |
 | `inbox_adapter_status` | — | caller binding (inbox/cursor/SSE/occupancy/last wake/config error) + other bindings summary; never a token |
 | `inbox_adapter_unbind` | `sessionId?` | remove one binding and clear its occupancy; other bindings untouched |
 
@@ -255,12 +255,35 @@ the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
   restart (the client module graph is cached at boot); existing sessions and
   bindings survive on disk.
 
+## Wake modes
+
+Bindings can use one of two explicit processing lifecycles:
+
+- `claim` (default): the wake text tells the Agent to call `inbox_claim`;
+- `view-ack`: the wake text tells the Agent to use `inbox_list` / `inbox_view`
+  and the program's own archive/complete path. It never instructs the Agent to
+  claim.
+
+`view-ack` is for programs such as the bot-first message board where
+`bot_thread_ack` archives a still-available item with `inbox_delete`. It does
+not change Inbox core semantics: claimed items still require complete/release.
+
+```json
+{
+  "descriptor": { "inboxId": "iibot-bot-sim", "adapterTokenRef": "file:/..." },
+  "wakeMode": "view-ack"
+}
+```
+
+The mode is DSH-local binding state (`wakeMode`), not a `BindingDescriptor`
+field. `inbox_adapter_status` displays it.
+
 ## Program MCP diagnostic
 
 The adapter never injects or calls business tools. At each wake it asks the live
-agent's tool schema whether `inbox_claim` or `inbox_list` is visible (including
-MCP-prefixed names such as `mcp__app-a-inbox__inbox_claim`), and stores the result
-as `health.programMcp`:
+agent's tool schema whether `inbox_claim`, `inbox_list`, or `inbox_view` is
+visible (including MCP-prefixed names such as
+`mcp__app-a-inbox__inbox_claim`), and stores the result as `health.programMcp`:
 
 ```json
 { "state": "available" | "missing" | "unknown", "at": "..." }
@@ -268,19 +291,22 @@ as `health.programMcp`:
 
 - `available`: the wake instructions are actionable; no warning is added;
 - `missing`: the wake still happens, but it carries
-  `注意：本会话未检测到程序 MCP 的 inbox_claim/inbox_list 工具；请先挂载程序 MCP，否则本回合无法处理。`
+  `注意：本会话未检测到程序 MCP 的 inbox_list/inbox_view 工具；请先挂载程序 MCP，否则本回合无法处理。`
   and `/inbox status` / the WebUI strip show the same condition;
 - `unknown`: tool introspection was unavailable; no claim is made either way.
 
 This is deliberately a diagnostic, not automatic tool injection: the program
 owns its MCP server and token, and the adapter must not speak MCP or expose
-business tools. To run the full loop, attach the program-owned MCP for the
-bound inbox; detach it after testing if it is only a temporary harness.
+business tools. To run the full loop, attach the program-owned MCP through the
+DSH connector for the target workspace; see
+[`docs/PROGRAM-MCP-ATTACH.md`](docs/PROGRAM-MCP-ATTACH.md). `inbox_adapter_status`
+re-probes the caller's current tool schema, so an already-attached connector
+does not need a new wake just to clear a stale `missing` state.
 
 ## Testing and acceptance
 
 ```bash
-node --test                        # 116 tests (unit + live; live skips when the daemon is down)
+node --test                        # 120 tests (unit + live; live skips when the daemon is down)
 node --test test/real-backend.test.mjs   # live app-a/app-b isolation, summary wake, token migration
 node scripts/acceptance-acp.mjs    # real DSH host, two ACP sessions
 node scripts/privacy-scan.mjs      # credentials across repo/state/logs/sessions
