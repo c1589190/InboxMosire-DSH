@@ -78,6 +78,7 @@ window.__ModuleLoader__.load({
         const [refreshKey, setRefreshKey] = React.useState(0)
         const [busy, setBusy] = React.useState(false)
         const [mcpError, setMcpError] = React.useState(false)
+        const busyRef = React.useRef(false)
 
         React.useEffect(() => {
           if (!sessionId) return undefined
@@ -125,33 +126,47 @@ window.__ModuleLoader__.load({
           typeof data.programMcpConnectorKey === 'string' ? data.programMcpConnectorKey : ''
         const mcpMounted = data.programMcp === 'available'
         const toggleMcp = async () => {
-          if (!connectorKey || busy) return
+          if (!connectorKey || busyRef.current) return
+          busyRef.current = true
           setBusy(true)
           setMcpError(false)
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), 15_000)
           try {
-            const request = async (method, params) => {
-              const response = await window.fetch('/mcp-connector/api', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ method, params }),
-              })
-              let body = null
-              try {
-                body = await response.json()
-              } catch {
-                // The status code is enough for a useful failure.
-              }
-              if (!response.ok || body?.ok === false) {
-                throw new Error(body?.message ?? `HTTP ${response.status}`)
-              }
+            const response = await window.fetch('/mcp-connector/api', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                method: 'setEnabled',
+                params: { key: connectorKey, enabled: !mcpMounted },
+              }),
+              signal: controller.signal,
+            })
+            let body = null
+            try {
+              body = await response.json()
+            } catch {
+              // The status code is enough for a useful failure.
             }
-            await request('setEnabled', { key: connectorKey, enabled: !mcpMounted })
-            if (!mcpMounted) await request('reconnect', { key: connectorKey })
-            await new Promise((resolve) => setTimeout(resolve, 400))
-            setRefreshKey((value) => value + 1)
+            if (!response.ok || body?.ok === false) {
+              throw new Error(body?.message ?? `HTTP ${response.status}`)
+            }
+            // Do not wait for the tool registry before unlocking the button.
+            setSnapshot((previous) => previous.data
+              ? {
+                  ...previous,
+                  data: {
+                    ...previous.data,
+                    programMcp: mcpMounted ? 'missing' : 'available',
+                  },
+                }
+              : previous)
+            setTimeout(() => setRefreshKey((value) => value + 1), 600)
           } catch {
             setMcpError(true)
           } finally {
+            clearTimeout(timer)
+            busyRef.current = false
             setBusy(false)
           }
         }

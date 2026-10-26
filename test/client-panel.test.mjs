@@ -99,6 +99,8 @@ test('the client bundle parses as a standalone module and keeps copy bounded', a
   assert.ok(text.includes("id: '@mosire/dsh-inbox-mosire'"))
   assert.ok(text.includes("ctx.connection.rpc.call("))
   assert.ok(text.includes("/mcp-connector/api"))
+  assert.ok(text.includes('AbortController'))
+  assert.ok(text.includes('15_000'))
   assert.ok(!text.includes('Authorization'))
   assert.ok(!text.includes('inbox_claim'))
   assert.ok(!text.includes('inbox_complete'))

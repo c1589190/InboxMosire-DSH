@@ -253,9 +253,10 @@ the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
   actionable;
 - when `programMcpConnectorKey` is configured, the strip has a **挂载 MCP /
   卸载 MCP** button. It calls the installed `dsh-mcp-connector` trusted
-  same-origin API (`setEnabled` / `reconnect`), then refreshes the panel. The
-  connector key and Bearer credential stay in the Host/local connector store;
-  no token is sent to the browser or written into the repository;
+  same-origin API (`setEnabled`), then refreshes the panel. The call is
+  single-flight and aborts after 15s, so rapid clicks cannot leave the button
+  stuck; the connector key and Bearer credential stay in the Host/local
+  connector store, and no token is sent to the browser or repository;
 - the client half is served by DSH's client-module system. Adding a `dsh.client`
   declaration to an already-running Host is picked up only after a DSH Web Host
   restart (the client module graph is cached at boot); existing sessions and

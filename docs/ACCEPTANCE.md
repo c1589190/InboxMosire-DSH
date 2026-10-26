@@ -135,7 +135,7 @@ privacy scan: PASS
   repo files scanned: 50
   adapter state/config/log files: 3
   DSH host log files: 6
-  DSH session logs: 894 (54 inbox-mosire wake messages)
+  DSH session logs: 897 (56 inbox-mosire wake messages)
   secrets checked: dsh-adapter.token, dsh-smoke-adapter.token, producer-main.token,
     smoke-producer.token, smoke-verify.token, dsh-session-app-a-wake.token,
     dsh-session-app-b-wake.token, dsh-session-app-a-wake.legacy.token,

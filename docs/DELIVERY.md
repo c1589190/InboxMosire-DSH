@@ -210,8 +210,8 @@ ACP artifacts in `/tmp/inbox-mosire-acp/`.
 ## 12. Token leakage check
 
 `scripts/privacy-scan.mjs` reads all ten local credential files and scans 50
-repository files, 3 adapter state/config/log files, 6 DSH host logs, 894 session
-logs (54 wake messages), and every adapter wake message. Result: **PASS**, 0
+repository files, 3 adapter state/config/log files, 6 DSH host logs, 897 session
+logs (56 wake messages), and every adapter wake message. Result: **PASS**, 0
 credential hits.
 Summary text is allowed only in the wake message; state and logs store
 counts/codes only. Content is excluded from the client projection and appears
