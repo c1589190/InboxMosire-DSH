@@ -265,6 +265,10 @@ The target prompt should be updated to use the native
 
 ## 10. WebUI mount/unmount button
 
+- **Superseded 2026-10-27**: the dock panel no longer mounts/unmounts MCP and
+  `programMcpConnectorKey` was removed; see
+  `docs/HANDOFF-2026-10-27-dock-ops-log.md`. The rows below describe the
+  earlier build.
 - `programMcpConnectorKey` is local config (`custom-iibot`); the panel now
   renders 挂载 / 卸载.
 - **卸载** does two things: disables the configured program MCP through the

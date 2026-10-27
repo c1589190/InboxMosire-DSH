@@ -14,7 +14,7 @@ import { startFakeInbox } from './helpers/fake-server.mjs'
 
 const SIGNAL = new AbortController().signal
 
-test('manager panel status exposes counts only for a bound session', async (t) => {
+test('manager panel status exposes counts, address, and last operation', async (t) => {
   const server = await startFakeInbox({ inbox: 'app-a' })
   t.after(() => server.close())
   const host = createFakeHost()
@@ -41,19 +41,14 @@ test('manager panel status exposes counts only for a bound session', async (t) =
   assert.equal(panel.claimed, 0)
   assert.equal(panel.revision, pushed.revision)
   assert.equal(panel.sse, 'connected')
-  assert.equal(panel.programMcp, 'available')
+  assert.match(panel.endpoint, /^127\.0\.0\.1:\d+$/)
   assert.ok(!JSON.stringify(panel).includes('PANEL-SECRET-SUMMARY'))
   assert.ok(!JSON.stringify(panel).includes('test-token'))
   created.manager.bindingFor('session-a').health.programMcp = {
     state: 'missing',
     at: new Date().toISOString(),
   }
-  created.manager.config.programMcpConnectorKey = 'custom-iibot'
-  assert.equal(created.manager.panelStatus('session-a').programMcp, 'missing')
-  assert.equal(
-    created.manager.panelStatus('session-a').programMcpConnectorKey,
-    'custom-iibot',
-  )
+  assert.equal(created.manager.panelStatus('session-a').programMcp, undefined)
   assert.match(created.manager.statusText('session-a'), /programMcp: state=missing/)
   await created.manager.suspend('session-a')
   assert.equal(created.manager.bindingFor('session-a').enabled, false)

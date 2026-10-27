@@ -13,18 +13,20 @@ never claims, completes, pushes, reads content/payload/payloadRef, or speaks MCP
 | `lib/bindings.js` | Descriptor validation and token refs: `tokenRefPath` :45, `loadBindingToken`, `validateDescriptor` :130. |
 | `lib/state.js` | v2 host state: `emptySummary` :27, `normalizeSummary` :43, `emptyHostState`/`normalizeBinding`/`normalizeHostState` (v1→v2); generic `StateStore.loadDocument`. |
 | `lib/panel.js` | Authenticated Web UI bridge: `PANEL_CHANNEL` `/inbox-mosire`, count-only `status` handler and refresh path. |
-| `client.js` | Browser dock panel in `conversation.input.dock`: locale dictionaries, 5s poll, mount/refresh `GET /status`, hidden when unbound, `程序 MCP 未挂载` state. |
+| `client.js` | Browser dock panel in `conversation.input.dock`: locale dictionaries, 5s poll, mount/refresh `GET /status`, hidden when unbound, bound `host:port`, one suspend/resume control, last-operation attribution. |
 | `lib/adapter.js` | Per-binding engine: SSE, status, bounded summary read/degrade/dedupe, followup, backoff, lifecycle (`readSummary` :633, `recordSummaryFailure` :672, `deliverWake` :711). |
 | `lib/inbox-client.js` | Read-only client: `getItems` :285, safe projection `normalizeItems` :148 (summary-first, legacy title fallback, content dropped), status, occupancy, SSE. |
 | `lib/template.js` | Bounded `summary` template (`renderSummarySection` :151, `renderWakeTemplate` :213) and legacy no-summary body. |
 | `lib/commands.js` | `/inbox status\|bind\|unbind\|retry` over the manager. |
-| `tools.js` | `inbox_adapter_status\|bind\|unbind`; descriptor/tokenRef arguments. |
+| `lib/ops-log.js` | Per-session binding lifecycle log: whitelisted fields, `host:port` projection, 200-entry/256 KiB rotation, session-scoped reads. |
+| `tools.js` | `inbox_adapter_status\|bind\|unbind\|log`; descriptor/tokenRef arguments. |
 | `lib/runtime.js` | In-process manager bridge between the engine row and the tool row. |
 | `test/summary.test.mjs` | 28 summary tests: summary/title fallback, template, config, degrade/forbidden, restart, two-binding isolation, update. |
 | `test/panel.test.mjs` | Host panel projection/RPC validation/refresh/no-throw. |
 | `test/program-tools.test.mjs` | Wake warning/state for `programMcp` available vs missing. |
 | `test/turn-end.test.mjs` | Running turn defers injection; a new revision bypasses no-progress backoff at turn end. |
-| `test/client-panel.test.mjs` | Client bundle registration, locale parity, rendered bound/unbound states. |
+| `test/client-panel.test.mjs` | Client bundle registration, locale parity, rendered bound/suspended states, address + single toggle. |
+| `test/ops-log.test.mjs` | Field whitelist, per-session isolation, rotation, torn lines, `host:port` projection. |
 | `test/manager.test.mjs` | Migration, isolation, occupancy, rebind, dispose, unbind, cold resume, restart, summary status. |
 | `test/real-backend.test.mjs` | Live app-a/app-b isolation/occupancy/restart, token migration, bounded summary wake. |
 | `scripts/acceptance-acp.mjs` | Real DSH host, two ACP sessions, tool-driven binding. |
@@ -123,23 +125,51 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
 ## 7. WebUI inbox panel
 
 - `BindingManager.panelStatus(sessionId)` returns one binding's `inboxId`,
-  `available`, `claimed`, `revision`, SSE state, and errors; it never returns
-  item ids, summaries, content, payloads, or the token. `refreshPanelStatus`
-  performs one read-only `GET /status` for the mount/refresh path.
+  `available`, `claimed`, `revision`, SSE state, errors, the bound `endpoint`
+  (`host:port` projection of `apiBaseUrl`), and `lastOp` from the operation log;
+  it never returns item ids, summaries, content, payloads, or the token.
+  `refreshPanelStatus` performs one read-only `GET /status` for the
+  mount/refresh path.
 - `index.js` registers the optional Host Connection RPC channel `/inbox-mosire`
   only when `connection` exists, so headless/ACP compositions are unaffected.
 - `client.js` registers the dock entry at order 30 in
   `conversation.input.dock`, uses `ctx.connection.rpc.call`, follows theme
   tokens, registers `zh`/`en` copy, hides when unbound, and polls every 5s.
-- Live registration was observed after the Web Host restart. The panel has a
-  manual **挂载 / 卸载** button when `programMcpConnectorKey` is set.
-  **卸载** disables the connector and calls Host RPC `suspend`, stopping the
-  binding engine, clearing occupancy, and persisting `enabled=false`; the row
-  stays as `Inbox 已卸载` with a mount control. **挂载** enables the connector
-  and calls `resume`, which reloads the token, starts status/SSE, and re-PUTs
-  occupancy. The toggle is single-flight with a 15s abort and no token reaches
-  the browser.
-- The button's client half needs one client reload after this code change.
+- The dock no longer touches MCP at all: program-MCP mounting is owned by the
+  MCP connector plugin, so `setEnabled`, the `programMcp` gate, and the
+  optimistic MCP state were removed from the browser bundle. The strip shows
+  the bound inbox `host:port` and one **挂载 / 卸载** control that only calls
+  Host RPC `suspend`/`resume` for the recorded descriptor: **卸载** stops SSE,
+  cursor activity, occupancy, and wakes while keeping the descriptor and
+  `enabled=false`; **挂载** reloads the token, restarts status/SSE, and re-PUTs
+  occupancy. The control is single-flight with a 15s abort, performs no
+  optimistic write, and re-reads `status` after the call.
+- A suspended row is attributed: `panelStatus.lastOp` carries the newest
+  operation-log row (`action`, `actor`, `at`, `result`), so the strip shows
+  `Inbox 已卸载（用户 13:02）` rather than implying a broken connection.
+- Both the client bundle and the engine row need a Host reload after this
+  change.
+
+## 7b. Binding operation log
+
+- `lib/ops-log.js` appends binding lifecycle events to `opsFile`
+  (`ops.jsonl` next to `state.json`, 0600, append-only JSONL). It records
+  `bind`/`unbind` (actor `agent`), `suspend`/`resume` (actor `user` from the
+  dock), `retry`, `start` failures, and `stop` rows when the Host disposes or
+  archives the session (actor `host`, `reason=session-disposed|session-archived`);
+  nothing else. The `endpoint` is the
+  `host:port` projection of `apiBaseUrl`, so a credential embedded in a URL can
+  never be persisted.
+- Fields are whitelisted at write time (`at/action/actor/session/inbox/endpoint/
+  wakeMode/result/error/reason`); tokens, token paths, item content, summaries, and
+  wake deliveries are dropped. Rotation keeps the newest 200 rows **per
+  session** against a 256 KiB ceiling, so one busy session cannot evict another
+  session's history.
+- Reads are hard-scoped: `OpsLog.read(sessionId)` filters on one session id and
+  there is no cross-session mode. `inbox_adapter_log` always passes the caller's
+  session and returns at most 100 rows, newest first.
+- `manager.logOp()` is best-effort: a log write failure is reported to the
+  adapter log and never breaks bind, wake delivery, or the panel.
 
 ## 8. Program MCP diagnostic
 

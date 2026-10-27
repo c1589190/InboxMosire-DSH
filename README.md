@@ -73,6 +73,7 @@ Model-facing tools (both rows are hot-reloadable independently):
 | `inbox_adapter_bind` | `sessionId?`, `inboxId`, `adapterTokenRef`, `apiBaseUrl?`, `channels?`, `label?`, `descriptor?`, `wakeMode?` | bind one session (default: caller); `wakeMode=claim` (default) or `view-ack`; same inbox keeps cursor/watermark, a different inbox resets them |
 | `inbox_adapter_status` | — | caller binding (inbox/cursor/SSE/occupancy/last wake/config error) + other bindings summary; never a token |
 | `inbox_adapter_unbind` | `sessionId?` | remove one binding and clear its occupancy; other bindings untouched |
+| `inbox_adapter_log` | `limit?` (1–100, default 20) | this caller's binding operation log, newest first (bind/unbind/suspend/resume/retry/failed start, with inbox and `host:port`); strictly per-session; never a token, item content, or wake delivery |
 
 Human command:
 
@@ -88,6 +89,27 @@ at bind time; an unreadable or relative reference fails the bind closed and
 leaves the previous binding intact. The raw token is used only in the
 `Authorization` header and is redacted from every log line.
 
+## Operation log
+
+Every binding lifecycle event is appended to a per-session JSONL log next to
+`state.json` (`opsFile`, default `ops.jsonl`, mode 0600):
+
+- **who / what**: `bind` and `unbind` (Agent), `suspend` and `resume` (the dock
+  panel, actor `user`), `retry`, a `start` failure when the token reference is
+  unusable, and a `stop` when the Host disposes or archives the session
+  (actor `host`, with `reason`);
+- **state facts only**: `at`, `action`, `actor`, `session`, `inbox`, `endpoint`
+  (`host:port`), `wakeMode`, `result`, an error code, and a short `reason`. Tokens, token paths,
+  item content, summaries, and wake deliveries are never written;
+- **strictly per-session**: `read(session)` filters on one session id, and no
+  cross-session query exists — `inbox_adapter_log` can only ever return the
+  caller's own entries;
+- **bounded**: 200 entries per session and a 256 KiB rotation ceiling, so one
+  busy session cannot evict another session's newest rows.
+
+`inbox_adapter_status` prints the newest row as `lastOp:` so an Agent can see
+"the panel suspended me at 13:02" without calling the log tool.
+
 ## Global configuration
 
 Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosire/config.json`
@@ -98,6 +120,7 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
 | `apiUrl` (fallback for descriptors) | `INBOX_API_URL` | `http://127.0.0.1:18765` |
 | `stateFile` | `INBOX_STATE_FILE` | `$DSH_HOME/inbox-mosire/state.json` |
 | `logFile` | `INBOX_LOG_FILE` | next to `stateFile` |
+| `opsFile` | `INBOX_OPS_FILE` | next to `stateFile` (`ops.jsonl`) |
 | `debounceMs` | `INBOX_WAKE_DEBOUNCE_MS` | `300` |
 | `heartbeatTimeoutSeconds` | `INBOX_HEARTBEAT_TIMEOUT_SECONDS` | `45` |
 | `requestTimeoutMs` | — | `10000` |
@@ -105,7 +128,6 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
 | `summaryMaxItems` | `INBOX_SUMMARY_MAX_ITEMS` | `3` (1–10) |
 | `summaryMaxTitleChars` | `INBOX_SUMMARY_MAX_TITLE_CHARS` | `80` (16–200) |
 | `summaryMaxTotalChars` | `INBOX_SUMMARY_MAX_TOTAL_CHARS` | `600` (120–4000) |
-| `programMcpConnectorKey` | `INBOX_PROGRAM_MCP_CONNECTOR_KEY` | empty; e.g. `custom-iibot` enables the panel MCP toggle |
 | `inboxId` / `tokenFile` / `sessionId` | legacy `INBOX_*` | used only for v1 state migration |
 
 ## State (v2)
@@ -248,18 +270,19 @@ the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
   `GET /status`, so the count is current even if the first SSE event was missed;
 - the strip follows the Host theme tokens and locale (`zh`/`en`), and refreshes
   every 5 seconds while mounted;
-- if the target session has no program-owned MCP business tool, the strip shows
-  `程序 MCP 未挂载` / `program MCP missing` instead of implying the wake is
-  actionable;
-- when `programMcpConnectorKey` is configured, the strip has a manual
-  **挂载 / 卸载** button:
-  - **卸载** disables the configured program MCP and suspends the current Inbox
-    binding: SSE, cursor activity, occupancy, and wakes stop; the row changes to
-    `Inbox 已卸载` and keeps a **挂载** control;
-  - **挂载** re-enables the MCP and resumes the same Inbox descriptor;
-  - if the binding is active but its MCP is missing, the button mounts MCP only.
-  A suspended binding stays disabled across Host restarts until remounted;
-  `enabled=false` is persisted. The connector toggle applies to that
+- the strip also shows the bound inbox address as `host:port` (scheme, path,
+  and userinfo are dropped before it leaves the Host);
+- one **挂载 / 卸载** button controls only this session's recorded Inbox
+  binding — MCP mounting belongs to the MCP connector plugin and is not touched
+  from this strip:
+  - **卸载** calls Host RPC `suspend`: SSE, cursor activity, occupancy, and
+    wakes stop; the descriptor is kept, `enabled=false` is persisted, and the
+    row changes to `Inbox 已卸载` plus who did it and when;
+  - **挂载** calls `resume`: the token is reloaded, status/SSE restart, and
+    occupancy is re-PUT for the same descriptor.
+  A suspended binding stays disabled across Host restarts until remounted.
+  Every bind/unbind/suspend/resume/retry/failed-start is appended to the
+  per-session operation log; see `inbox_adapter_log`.
   connector's configured scope, so it can affect other sessions in the same
   workspace/global scope;
 - the toggle is single-flight and aborts after 15s, so rapid clicks cannot

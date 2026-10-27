@@ -14,6 +14,7 @@ import { registerInboxCommand } from './lib/commands.js'
 import { ConfigError, readLocalConfig, resolveConfig } from './lib/config.js'
 import { createLogger } from './lib/log.js'
 import { BindingManager } from './lib/manager.js'
+import { OpsLog } from './lib/ops-log.js'
 import { registerPanelRpc } from './lib/panel.js'
 import { setManager, setManagerFailure } from './lib/runtime.js'
 import { StateStore, normalizeHostState } from './lib/state.js'
@@ -103,7 +104,14 @@ async function createManager(ctx, rowConfig, baseLogger) {
     now: () => Date.now(),
     hasBusinessTools,
   }
-  const manager = new BindingManager({ config, logger, store, state: loaded.state, host })
+  const manager = new BindingManager({
+    config,
+    logger,
+    store,
+    state: loaded.state,
+    host,
+    opsLog: new OpsLog({ file: config.opsFile, logger }),
+  })
   return { manager, logger, config }
 }
 

@@ -51,11 +51,11 @@ function tool(host, name) {
   return definition
 }
 
-test('the tool row registers v2 status, bind, and unbind', async (t) => {
+test('the tool row registers v2 status, bind, unbind, and the per-session log', async (t) => {
   const { host } = await setup(t)
   assert.deepEqual(
     host.tools.map((entry) => entry.name).sort(),
-    ['inbox_adapter_bind', 'inbox_adapter_status', 'inbox_adapter_unbind'],
+    ['inbox_adapter_bind', 'inbox_adapter_log', 'inbox_adapter_status', 'inbox_adapter_unbind'],
   )
   for (const definition of host.tools) {
     assert.equal(typeof definition.execute, 'function')
@@ -171,4 +171,42 @@ test('tools fail loudly when the engine row is not ready', async (t) => {
     () => status.execute({}, { agent: { id: 'session-test' }, signal: SIGNAL }),
     /engine row missing/,
   )
+})
+
+test('inbox_adapter_log returns only the caller session and never a token', async (t) => {
+  const { host, serverA, serverB, descA, descB } = await setup(t)
+  const bind = tool(host, 'inbox_adapter_bind')
+  await bind.execute(
+    { sessionId: 'session-test', descriptor: descA },
+    { agent: { id: 'session-test' }, signal: SIGNAL },
+  )
+  await bind.execute(
+    { sessionId: 'session-other', descriptor: descB },
+    { agent: { id: 'session-other' }, signal: SIGNAL },
+  )
+  await waitFor(
+    () => serverA.connectionCount === 1 && serverB.connectionCount === 1,
+    { label: 'both SSE' },
+  )
+
+  const log = tool(host, 'inbox_adapter_log')
+  const mine = await log.execute({ limit: 10 }, { agent: { id: 'session-test' }, signal: SIGNAL })
+  assert.match(mine.text, /本会话，最新在前/)
+  assert.match(mine.text, /bind by=agent inbox=app-a/)
+  assert.match(mine.text, /at=127\.0\.0\.1:\d+/)
+  assert.ok(!mine.text.includes('app-b'), 'the other session stays invisible')
+  assert.ok(!mine.text.includes('test-token'))
+  assert.ok(!mine.text.includes(descA.adapterTokenRef))
+  assert.ok(!mine.text.includes(serverA.token))
+
+  const other = await log.execute({}, { agent: { id: 'session-other' }, signal: SIGNAL })
+  assert.ok(!other.text.includes('app-a'))
+
+  const stranger = await log.execute({}, { agent: { id: 'session-stranger' }, signal: SIGNAL })
+  assert.equal(stranger.text, '本会话没有 inbox 操作记录。')
+
+  const unbind = tool(host, 'inbox_adapter_unbind')
+  await unbind.execute({ sessionId: 'session-test' }, { agent: { id: 'session-test' }, signal: SIGNAL })
+  const after = await log.execute({ limit: 1 }, { agent: { id: 'session-test' }, signal: SIGNAL })
+  assert.match(after.text, /unbind by=agent/)
 })

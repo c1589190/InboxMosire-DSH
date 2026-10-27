@@ -5,10 +5,11 @@
  */
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { InboxAdapter } from '../../lib/adapter.js'
 import { resolveConfig } from '../../lib/config.js'
 import { BindingManager } from '../../lib/manager.js'
+import { OpsLog } from '../../lib/ops-log.js'
 import { wireEngineEvents } from '../../index.js'
 import { InboxClient } from '../../lib/inbox-client.js'
 import { createLogger } from '../../lib/log.js'
@@ -382,6 +383,7 @@ export async function createTestManager({ host, overrides = {}, stateFile, state
       now: host.now,
       hasBusinessTools: () => host.businessTools !== false,
     },
+    opsLog: new OpsLog({ file: join(dirname(file), 'ops.jsonl'), logger }),
   })
   const { wireHostEvents } = await import('../../index.js')
   wireHostEvents(host.ctx, manager)

@@ -14,17 +14,19 @@ window.__ModuleLoader__.load({
       'panel.status.live': '已连接',
       'panel.status.connecting': '连接中',
       'panel.status.offline': '离线',
-      'panel.status.disabled': '已停用',
       'panel.status.unloaded': 'Inbox 已卸载',
-      'panel.status.no-mcp': '程序 MCP 未挂载',
       'panel.status.error': '读取失败',
       'panel.refresh': '刷新通知数',
-      'panel.mcp.mount': '挂载 MCP',
-      'panel.mcp.unmount': '卸载 MCP',
-      'panel.mountAll': '挂载',
-      'panel.unmountAll': '卸载',
-      'panel.mcp.working': '处理中…',
-      'panel.mcp.failed': 'MCP 操作失败',
+      'panel.endpoint': '绑定的 InboxMosire 地址',
+      'panel.mount': '挂载',
+      'panel.unmount': '卸载',
+      'panel.working': '处理中…',
+      'panel.failed': '操作失败',
+      'panel.op.failed': '失败',
+      'panel.actor.user': '用户',
+      'panel.actor.agent': 'Agent',
+      'panel.actor.host': '系统',
+      'panel.actor.auto': '自动',
     }
 
     /** English copy, checked against the same key set. */
@@ -34,17 +36,19 @@ window.__ModuleLoader__.load({
       'panel.status.live': 'live',
       'panel.status.connecting': 'connecting',
       'panel.status.offline': 'offline',
-      'panel.status.disabled': 'disabled',
       'panel.status.unloaded': 'Inbox unmounted',
-      'panel.status.no-mcp': 'program MCP missing',
       'panel.status.error': 'read failed',
       'panel.refresh': 'Refresh notification count',
-      'panel.mcp.mount': 'Mount MCP',
-      'panel.mcp.unmount': 'Unmount MCP',
-      'panel.mountAll': 'Mount',
-      'panel.unmountAll': 'Unmount',
-      'panel.mcp.working': 'working…',
-      'panel.mcp.failed': 'MCP action failed',
+      'panel.endpoint': 'Bound InboxMosire address',
+      'panel.mount': 'Mount',
+      'panel.unmount': 'Unmount',
+      'panel.working': 'working…',
+      'panel.failed': 'action failed',
+      'panel.op.failed': 'failed',
+      'panel.actor.user': 'user',
+      'panel.actor.agent': 'agent',
+      'panel.actor.host': 'system',
+      'panel.actor.auto': 'auto',
     }
 
     const css = `
@@ -62,10 +66,11 @@ window.__ModuleLoader__.load({
 .ims-spacer{flex:1;min-width:8px}
 .ims-count{flex:none;font-weight:600;font-variant-numeric:tabular-nums;color:var(--dsw-alias-brand-primary)}
 .ims-pending{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px}
-.ims-mcp{flex:none;height:24px;padding:0 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:22px;cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
-.ims-mcp:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}
-.ims-mcp:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
-.ims-mcp:disabled{opacity:.5;cursor:default}
+.ims-endpoint{flex:none;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:12px;color:var(--dsw-alias-label-secondary)}
+.ims-toggle{flex:none;height:24px;padding:0 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:22px;cursor:pointer;transition:background .12s ease,color .12s ease,border-color .12s ease}
+.ims-toggle:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}
+.ims-toggle:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.ims-toggle:disabled{opacity:.5;cursor:default}
 .ims-refresh{flex:none;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .ims-refresh:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
 .ims-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
@@ -83,7 +88,7 @@ window.__ModuleLoader__.load({
         const [snapshot, setSnapshot] = React.useState({ data: null, error: false })
         const [refreshKey, setRefreshKey] = React.useState(0)
         const [busy, setBusy] = React.useState(false)
-        const [mcpError, setMcpError] = React.useState(false)
+        const [actionError, setActionError] = React.useState(false)
         const busyRef = React.useRef(false)
 
         React.useEffect(() => {
@@ -128,135 +133,57 @@ window.__ModuleLoader__.load({
         const data = snapshot.data
         if (!data || data.bound !== true) return null
 
-        const connectorKey =
-          typeof data.programMcpConnectorKey === 'string' ? data.programMcpConnectorKey : ''
         const inboxActive = data.enabled !== false
-        const mcpMounted = data.programMcp === 'available'
-        const actionLabel = !inboxActive
-          ? translate('panel.mountAll')
-          : connectorKey && !mcpMounted
-            ? translate('panel.mcp.mount')
-            : translate('panel.unmountAll')
+        const endpoint = typeof data.endpoint === 'string' ? data.endpoint : ''
+        const lastOp =
+          data.lastOp && typeof data.lastOp === 'object' && typeof data.lastOp.action === 'string'
+            ? data.lastOp
+            : null
+        const actionLabel = inboxActive
+          ? translate('panel.unmount')
+          : translate('panel.mount')
+        /**
+         * Clock time of the last operation, in the viewer's local zone.
+         * @param {string} at - ISO timestamp.
+         * @returns {string} `HH:MM` or an empty string.
+         */
+        const clockOf = (at) => {
+          const value = new Date(at)
+          if (Number.isNaN(value.getTime())) return ''
+          return value.toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          })
+        }
+        const actorLabel = lastOp
+          ? translate(`panel.actor.${lastOp.actor}`)
+          : ''
+        const lastOpNote = lastOp
+          ? `${actorLabel || lastOp.actor}${clockOf(lastOp.at) ? ` ${clockOf(lastOp.at)}` : ''}${
+              lastOp.result === 'fail' ? ` ${translate('panel.op.failed')}` : ''
+            }`
+          : ''
         const toggleInbox = async () => {
           if (busyRef.current) return
           busyRef.current = true
           setBusy(true)
-          setMcpError(false)
+          setActionError(false)
           const controller = new AbortController()
           const timer = setTimeout(() => controller.abort(), 15_000)
-          let failed = false
-          const setConnector = async (enabled) => {
-            if (!connectorKey) return
-            const response = await window.fetch('/mcp-connector/api', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                method: 'setEnabled',
-                params: { key: connectorKey, enabled },
-              }),
-              signal: controller.signal,
-            })
-            let body = null
-            try {
-              body = await response.json()
-            } catch {
-              // The status code is enough for a useful failure.
-            }
-            if (!response.ok || body?.ok === false) {
-              throw new Error(body?.message ?? `HTTP ${response.status}`)
-            }
-          }
-          const setInbox = async (endpoint) => {
+          try {
             const result = await ctx.connection.rpc.call(
               '/inbox-mosire',
-              endpoint,
+              inboxActive ? 'suspend' : 'resume',
               { sessionId },
               controller.signal,
             )
             if (!result?.ok) {
-              throw new Error(result?.error?.message ?? `${endpoint} failed`)
+              throw new Error(result?.error?.message ?? `${inboxActive ? 'suspend' : 'resume'} failed`)
             }
-            return result.value
-          }
-          try {
-            if (!inboxActive) {
-              try {
-                await setConnector(true)
-              } catch {
-                failed = true
-              }
-              try {
-                await setInbox('resume')
-              } catch {
-                failed = true
-              }
-              setSnapshot((previous) => previous.data
-                ? {
-                    ...previous,
-                    data: {
-                      ...previous.data,
-                      enabled: true,
-                      programMcp: connectorKey ? 'available' : previous.data.programMcp,
-                    },
-                  }
-                : previous)
-            } else if (mcpMounted) {
-              try {
-                await setConnector(false)
-              } catch {
-                failed = true
-              }
-              try {
-                await setInbox('suspend')
-              } catch {
-                failed = true
-              }
-              setSnapshot((previous) => previous.data
-                ? {
-                    ...previous,
-                    data: {
-                      ...previous.data,
-                      enabled: false,
-                      available: null,
-                      claimed: null,
-                      programMcp: connectorKey ? 'missing' : previous.data.programMcp,
-                    },
-                  }
-                : previous)
-            } else if (connectorKey) {
-              try {
-                await setConnector(true)
-              } catch {
-                failed = true
-              }
-              setSnapshot((previous) => previous.data
-                ? {
-                    ...previous,
-                    data: { ...previous.data, programMcp: 'available' },
-                  }
-                : previous)
-            } else {
-              try {
-                await setInbox('suspend')
-              } catch {
-                failed = true
-              }
-              setSnapshot((previous) => previous.data
-                ? {
-                    ...previous,
-                    data: {
-                      ...previous.data,
-                      enabled: false,
-                      available: null,
-                      claimed: null,
-                    },
-                  }
-                : previous)
-            }
-            if (failed) setMcpError(true)
-            setTimeout(() => setRefreshKey((value) => value + 1), 600)
+            setRefreshKey((value) => value + 1)
           } catch {
-            setMcpError(true)
+            setActionError(true)
           } finally {
             clearTimeout(timer)
             busyRef.current = false
@@ -270,18 +197,12 @@ window.__ModuleLoader__.load({
         if (snapshot.error || data.blocked || data.configError) {
           tone = 'error'
           status = translate('panel.status.error')
-        } else if (mcpError) {
+        } else if (actionError) {
           tone = 'error'
-          status = translate('panel.mcp.failed')
+          status = translate('panel.failed')
         } else if (!inboxActive) {
           tone = 'offline'
-          status = translate('panel.status.unloaded')
-        } else if (data.programMcp === 'missing') {
-          tone = 'error'
-          status = translate('panel.status.no-mcp')
-        } else if (data.enabled === false) {
-          tone = 'offline'
-          status = translate('panel.status.disabled')
+          status = `${translate('panel.status.unloaded')}${lastOpNote ? `（${lastOpNote}）` : ''}`
         } else if (data.sse === 'connecting') {
           tone = 'connecting'
           status = translate('panel.status.connecting')
@@ -335,6 +256,13 @@ window.__ModuleLoader__.load({
               ),
               h('span', { key: 'dot', className: `ims-dot ${tone}`, 'aria-hidden': true }),
               h('span', { key: 'status', className: 'ims-status' }, status),
+              endpoint
+                ? h(
+                    'span',
+                    { key: 'endpoint', className: 'ims-endpoint', title: translate('panel.endpoint') },
+                    endpoint,
+                  )
+                : null,
               h('span', { key: 'spacer', className: 'ims-spacer' }),
               inboxActive
                 ? h('span', { key: 'count', className: 'ims-count' }, available ?? '—')
@@ -345,15 +273,15 @@ window.__ModuleLoader__.load({
               h(
                 'button',
                 {
-                  key: 'mcp',
+                  key: 'toggle',
                   type: 'button',
-                  className: 'ims-mcp',
+                  className: 'ims-toggle',
                   disabled: busy,
                   title: actionLabel,
                   'aria-label': actionLabel,
                   onClick: toggleInbox,
                 },
-                busy ? translate('panel.mcp.working') : actionLabel,
+                busy ? translate('panel.working') : actionLabel,
               ),
               h(
                 'button',

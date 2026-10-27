@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { normalizeHostState } from '../lib/state.js'
 import {
   createFakeHost,
@@ -453,4 +453,75 @@ test('rest expires and wakes at most once for the latest revision', async (t) =>
     1,
     'expiry produces one wake, not a loop',
   )
+})
+
+test('binding lifecycle is logged per session and surfaced to the panel', async (t) => {
+  const { manager, serverA, stateFile } = await setupTwo(t)
+
+  const bound = manager.readOps('session-a')
+  assert.equal(bound.length, 1)
+  assert.equal(bound[0].action, 'bind')
+  assert.equal(bound[0].actor, 'agent')
+  assert.equal(bound[0].inbox, 'app-a')
+  assert.equal(bound[0].endpoint, `127.0.0.1:${new URL(serverA.url).port}`)
+  assert.equal(bound[0].wakeMode, 'claim')
+  assert.ok(
+    !manager.readOps('session-b').some((entry) => entry.inbox === 'app-a'),
+    'one session never sees the other session log',
+  )
+
+  await manager.suspend('session-a')
+  assert.equal(manager.readOps('session-a')[0].action, 'suspend')
+  assert.equal(manager.readOps('session-a')[0].actor, 'user')
+
+  await manager.resume('session-a')
+  assert.equal(manager.readOps('session-a')[0].action, 'resume')
+
+  const panel = manager.panelStatus('session-a')
+  assert.match(panel.endpoint, /^127\.0\.0\.1:\d+$/)
+  assert.equal(panel.lastOp.action, 'resume')
+  assert.equal(panel.lastOp.actor, 'user')
+  assert.equal(panel.lastOp.session, 'session-a')
+
+  const hidden = manager.panelStatus('session-b')
+  assert.notEqual(hidden.lastOp.session, 'session-a')
+  assert.equal(manager.panelStatus('session-stranger').bound, false)
+
+  await manager.unbind('session-a')
+  assert.equal(manager.readOps('session-a')[0].action, 'unbind')
+
+  assert.match(manager.statusText('session-b'), /lastOp: .*bind by agent/)
+  assert.match(manager.statusText('session-a'), /isBound=false/)
+
+  const raw = await readFile(join(dirname(stateFile), 'ops.jsonl'), 'utf8')
+  assert.ok(!raw.includes(serverA.token), 'the wake token never reaches the log')
+  assert.ok(!raw.includes('wake.token'), 'the token reference never reaches the log')
+  const rows = raw
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line))
+  assert.ok(rows.every((row) => typeof row.session === 'string'), 'every row names its session')
+  assert.equal(
+    rows.filter((row) => row.session === 'session-a').length,
+    4,
+    'bind, suspend, resume, unbind were recorded for session-a only',
+  )
+  assert.equal(
+    rows.filter((row) => row.session === 'session-b').length,
+    1,
+    'session-b keeps its own single bind row',
+  )
+})
+
+test('a disposed session leaves a host stop row in its own log', async (t) => {
+  const { manager } = await setupTwo(t)
+  manager.onAgentDisposed({ agent: { id: 'session-a' } })
+  await waitFor(
+    () => manager.readOps('session-a').some((entry) => entry.action === 'stop'),
+    { label: 'host stop row' },
+  )
+  const stop = manager.readOps('session-a').find((entry) => entry.action === 'stop')
+  assert.equal(stop.actor, 'host')
+  assert.equal(stop.reason, 'session-disposed')
+  assert.ok(!manager.readOps('session-b').some((entry) => entry.action === 'stop'))
 })

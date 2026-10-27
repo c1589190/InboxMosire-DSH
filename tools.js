@@ -183,4 +183,48 @@ export function apply(ctx) {
       return { text: result.message }
     },
   })
+
+  register({
+    name: 'inbox_adapter_log',
+    description:
+      "Read this session's InboxMosire binding operation log, newest first: who bound, unbound, suspended (panel 卸载), resumed (panel 挂载), retried, failed to start, or stopped because the session was disposed/archived, with the inbox id and host:port. Strictly per-session: it never returns another session's entries, any token/token path, item content, or wake deliveries. Read-only.",
+    parameters: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+          default: 20,
+          description: 'Entries to return (1-100); default 20.',
+        },
+      },
+      additionalProperties: false,
+    },
+    output: OUTPUT,
+    execute: async (args, exec) => {
+      const live = await manager()
+      const requested = args && Number.isSafeInteger(args.limit) ? args.limit : 20
+      const limit = Math.max(1, Math.min(100, requested))
+      const entries = live.readOps(String(exec.agent?.id ?? ''), limit)
+      if (entries.length === 0) {
+        return { text: '本会话没有 inbox 操作记录。' }
+      }
+      const lines = [`InboxMosire 操作日志（本会话，最新在前，共 ${entries.length} 条）`]
+      for (const entry of entries) {
+        const parts = [
+          entry.at,
+          entry.action,
+          `by=${entry.actor}`,
+          entry.inbox ? `inbox=${entry.inbox}` : null,
+          entry.endpoint ? `at=${entry.endpoint}` : null,
+          entry.wakeMode ? `wakeMode=${entry.wakeMode}` : null,
+          `result=${entry.result}`,
+          entry.error ? `error=${entry.error}` : null,
+        ]
+        lines.push(parts.filter(Boolean).join(' '))
+      }
+      return { text: lines.join('\n') }
+    },
+  })
 }

@@ -65,25 +65,12 @@ mcp__iibot__inbox_claim
 `__inbox_list`、`__inbox_view` 或 `__inbox_claim` 结尾；再检查 session scope，
 不要先改 Inbox core。
 
-## WebUI 手动挂载/卸载
+## WebUI 不再控制 MCP
 
-在 `~/.dsh/inbox-mosire/config.json`（或 `INBOX_PROGRAM_MCP_CONNECTOR_KEY`）
-设置本地 connector key，例如：
+从 2026-10-27 起，Inbox dock 面板不再挂载或卸载 MCP：`setEnabled` / `reconnect`
+调用与 `programMcp` 门槛都已从 client bundle 移除，`programMcpConnectorKey`
+配置项也已删除。面板只显示绑定 inbox 的 `host:port` 和一颗挂起/恢复按钮。
 
-```json
-{ "programMcpConnectorKey": "custom-iibot" }
-```
-
-Inbox 面板会在 `programMcp=missing` 时显示“挂载 MCP”，在
-`programMcp=available` 时显示“卸载 MCP”。按钮只调用已安装
-`dsh-mcp-connector` 的同源受信 API：
-
-```text
-POST /mcp-connector/api
-{"method":"setEnabled","params":{"key":"custom-iibot","enabled":true|false}}
-{"method":"reconnect","params":{"key":"custom-iibot"}}
-```
-
-Bearer token 仍在 Host 的 connector credential 中，不进入浏览器、仓库、
-descriptor、wake message 或日志。按钮代码更新后需要一次 client reload/重启
-才会出现在已打开的页面。
+需要挂载或修复 `custom-iibot` 时，直接使用 MCP connector 插件
+（`mcp_connector_*` 工具或连接器页面）；程序 MCP 的诊断仍可通过
+`inbox_adapter_status` 的 `programMcp:` 行与 wake 文本里的缺失警告观察。
