@@ -415,6 +415,8 @@ summary-wake run); `docs/DELIVERY.md` is the delivery report.
 
 - A wake requires a **live** agent. A cold session is not resumed by the
   adapter; its binding starts when the session resumes.
+- Binding a session with existing `available` items and no prior `lastWake`
+  emits one bootstrap wake, so restart/rebind cannot silently lose a backlog.
 - One binding per session; re-binding replaces it. Different sessions may bind
   different inboxes.
 - Delivery is at-most-once per revision by design.
