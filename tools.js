@@ -97,7 +97,9 @@ export function apply(ctx) {
     output: OUTPUT,
     execute: async (_args, exec) => {
       const live = await manager()
-      await live.refreshProgramMcp?.(exec.agent?.id)
+      // 状态查询必须回源当前 board，不能只读上一次 wake/SSE 的缓存
+      // revision；refreshPanelStatus 同时刷新 programMcp。
+      await live.refreshPanelStatus?.(exec.agent?.id)
       return { text: live.statusText(exec.agent?.id) }
     },
   })
