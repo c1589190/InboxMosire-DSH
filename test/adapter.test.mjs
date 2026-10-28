@@ -29,6 +29,40 @@ async function setup(t, { agentStatus = 'idle', createAgent = true, start = true
   return { server, host, agent, ...created }
 }
 
+test('rebinding with available backlog emits one bootstrap wake', async (t) => {
+  const server = await startFakeInbox()
+  t.after(() => server.close())
+  server.push({ channel: 'ticket', summary: '积压工单' })
+  const host = createFakeHost()
+  host.createAgent('session-test')
+  const dir = await mkdtemp(join(tmpdir(), 'inbox-bootstrap-'))
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))
+  const stateFile = join(dir, 'state.json')
+  await writeFile(
+    stateFile,
+    JSON.stringify({
+      version: 1,
+      inboxId: 'smoke',
+      sessionRef: 'session-test',
+      channels: ['ticket'],
+      lastEventId: 1,
+      lastObservedRevision: 1,
+      lastWokenRevision: 1,
+      enabled: true,
+      lastWake: null,
+      wake: { attempts: 0, stalls: 0, nextWakeAllowedAt: null },
+      health: {},
+    }),
+  )
+  const { adapter } = await createTestAdapter({ server, host, stateFile })
+  t.after(() => adapter.stop())
+  await adapter.start()
+  await waitFor(() => host.followups.length === 1, { label: 'bootstrap wake' })
+  assert.match(host.followups[0].message.content[0].text, /available=1/)
+  await delay(200)
+  assert.equal(host.followups.length, 1, 'bootstrap wake is not duplicated')
+})
+
 test('an empty board never wakes the session', async (t) => {
   const { server, host, adapter } = await setup(t)
   await waitFor(() => server.connectionCount === 1, { label: 'SSE connection' })
