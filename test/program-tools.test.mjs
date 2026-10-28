@@ -26,11 +26,13 @@ test('a wake without a program MCP warns before the fixed instructions', () => {
     },
     programMcpMissing: true,
   })
-  const warningIndex = text.indexOf('未检测到程序 MCP')
+  const warningIndex = text.indexOf('未检测到可处理 source 的程序 MCP')
   const instructionIndex = text.indexOf('请直接通过你的程序 MCP')
   assert.ok(warningIndex > 0, text)
   assert.ok(instructionIndex > warningIndex, 'the warning comes before the instructions')
-  assert.ok(text.includes('inbox_list/inbox_view'))
+  assert.ok(text.includes('可处理 source 的程序 MCP 业务工具'))
+  assert.ok(text.includes('qq_conversation_read/ack'))
+  assert.ok(!text.includes('inbox_list/inbox_view'))
 })
 
 test('adapter records programMcp=missing and warns without blocking the wake', async (t) => {
@@ -46,7 +48,7 @@ test('adapter records programMcp=missing and warns without blocking the wake', a
   server.push({ channel: 'ticket', summary: '需要程序 MCP' })
   await waitFor(() => host.followups.length === 1, { label: 'wake' })
   const text = host.followups[0].message.content[0].text
-  assert.match(text, /未检测到程序 MCP/)
+  assert.match(text, /未检测到可处理 source 的程序 MCP/)
   assert.match(text, /"summary":"需要程序 MCP"/)
   assert.equal(created.adapter.snapshot().health.programMcp.state, 'missing')
   assert.match(created.adapter.snapshot().health.programMcp.at, /^\d{4}-/)

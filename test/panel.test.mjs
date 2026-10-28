@@ -49,7 +49,10 @@ test('manager panel status exposes counts, address, and last operation', async (
     at: new Date().toISOString(),
   }
   assert.equal(created.manager.panelStatus('session-a').programMcp, undefined)
-  assert.match(created.manager.statusText('session-a'), /programMcp: state=missing/)
+  const programMcpText = created.manager.statusText('session-a')
+  assert.match(programMcpText, /programMcp: state=missing/)
+  assert.match(programMcpText, /可处理 source 的程序 MCP 工具/)
+  assert.ok(!programMcpText.includes('inbox_list/inbox_view'))
   await created.manager.suspend('session-a')
   assert.equal(created.manager.bindingFor('session-a').enabled, false)
   assert.equal(created.manager.engines.has('session-a'), false)

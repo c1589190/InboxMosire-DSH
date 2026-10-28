@@ -137,6 +137,7 @@ export async function startFakeInbox({
    * @param {string} [input.channel] - channel id.
    * @param {string} [input.kind] - item kind.
    * @param {string} [input.summary] - short summary shown by the adapter.
+   * @param {string} [input.source] - optional source address shown by the adapter.
    * @param {string} [input.title] - summary text, or the legacy title.
    * @param {string} [input.aliasTitle] - legacy title returned beside summary.
    * @param {boolean} [input.legacyTitle] - emit a title-only legacy item.
@@ -166,6 +167,7 @@ export async function startFakeInbox({
       item.summary = summary
       if (input.summaryOnly !== true) item.title = input.aliasTitle ?? summary
     }
+    if (input.source !== undefined) item.source = input.source
     void input.content
     void input.payload
     availableItems.push(item)

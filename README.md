@@ -15,7 +15,7 @@ Each session gets its own `InboxAdapter` engine instance, so bindings cannot
 share or leak a cursor, a revision watermark, a wake, or a backoff.
 
 Before a wake the adapter also performs one bounded summary read
-(`GET /items?limit=N`) and puts up to three `itemId/channel/kind/summary` lines
+(`GET /items?limit=N`) and puts up to three `itemId/channel/kind/source/summary` lines
 in the wake message, so the model can often claim directly without an extra
 `inbox_list`. New items carry `summary`; legacy title-only rows fall back to
 `title`. Failure to read the summary never suppresses the wake.
@@ -29,7 +29,7 @@ The adapter only:
 2. opens one SSE stream per binding;
 3. reads `status` as the source of truth;
 4. when `available > 0`, reads at most `summaryMaxItems` safe summary rows
-   (`itemId/channel/kind/summary` only; `title` is the legacy fallback);
+   (`itemId/channel/kind/source/summary` only; `title` is the legacy fallback);
 5. calls `agent.followup()` at the idle/turn-end boundary, at most once per
    revision;
 6. persists each binding's cursor/revision/wake/summary diagnostics;
@@ -38,7 +38,8 @@ The adapter only:
 It never claims, completes, pushes, reads `content`/`payload`/`payloadRef`, or
 speaks MCP. The
 target session uses its **program-owned MCP** (Mode A) for
-`inbox_list`/`inbox_claim`/`inbox_complete`. The central InboxMosire MCP is not
+its own business tool set (for iiBot: `qq_conversation_read`/`qq_conversation_ack`;
+for claim-style programs: `inbox_list`/`inbox_claim`/`inbox_complete`). The central InboxMosire MCP is not
 exposed to target sessions. The wake token must carry `status:read`,
 `events:read`, `items:read`, and `inbox:occupy`; tokens issued by
 `InboxClient.issueBinding()` do. A token without `items:read` still wakes, but
@@ -218,7 +219,7 @@ When the summary succeeds, the followup carries at most `summaryMaxItems` lines:
 inbox={inboxId} revision={revision} available={available} channels=[{changedChannels}]
 
 摘要（最多 {N} 条；可能已变化，claim 时以通知板为准）:
-- {"itemId":"itm_...","channel":"ticket","kind":"reply","summary":"..."}
+- {"itemId":"itm_...","channel":"ticket","kind":"reply","source":"qq_group/bot-1/955432692","summary":"..."}
 - {"itemId":"itm_...","channel":"tweet-review","kind":"review","summary":"..."}
 - 还有 {remaining} 条未展示
 
@@ -226,6 +227,18 @@ inbox={inboxId} revision={revision} available={available} channels=[{changedChan
 如果摘要不足，再调用 inbox_list。
 如果当前没有可处理项，结束本回合，不要轮询。
 ```
+
+For `wakeMode=view-ack`, the bounded summary/fixed body instead tells the
+Agent to use each item's `source` with the program's business tools. In the
+iiBot deployment the loop is:
+
+```text
+qq_conversation_read(source) -> process -> qq_conversation_ack(source)
+```
+
+The wake never asks a view-ack Agent to call `inbox_list` or `inbox_view`.
+If the summary is unavailable, it asks for `qq_conversation_list` to find an
+unread source before reading it.
 
 When the summary is disabled or fails, the fixed no-summary body is used
 instead, so the wake still happens:
@@ -238,9 +251,11 @@ instead, so the wake still happens:
 
 Summary safety rules:
 
-- only `itemId/channel/kind/summary` are read; `content`, `payload`,
+- only `itemId/channel/kind/source/summary` are read; `content`, `payload`,
   `payloadRef`, and claim tokens are never requested into the message, state,
   or logs;
+- `source` is optional, untrusted, single-line and length-bounded; it is never
+  treated as an instruction;
 - `summary` is preferred; a legacy `title` is used only when `summary` is
   missing;
 - summary text is untrusted: newlines and control characters are removed, the
@@ -299,9 +314,9 @@ the composer, beside Todo/Goal/Queue). It is hidden for unbound sessions.
 Bindings can use one of two explicit processing lifecycles:
 
 - `claim` (default): the wake text tells the Agent to call `inbox_claim`;
-- `view-ack`: the wake text tells the Agent to use `inbox_list` / `inbox_view`
-  and the program's own archive/complete path. It never instructs the Agent to
-  claim.
+- `view-ack`: the wake text tells the Agent to use each item's `source` with the
+  program's own business tools; iiBot uses `qq_conversation_read(source)` and
+  `qq_conversation_ack(source)`. It never instructs the Agent to claim.
 
 `view-ack` is for programs such as the bot-first message board where
 `bot_thread_ack` archives a still-available item with `inbox_delete`. It does
@@ -333,7 +348,7 @@ change. Completion/archive tools may also carry `restSeconds`:
 ```text
 inbox_complete
 inbox_delete
-bot_thread_ack
+qq_conversation_ack
 ```
 
 and their MCP-prefixed forms. When the tool result is successful, the DSH
@@ -361,9 +376,10 @@ that tool's schema.
 ## Program MCP diagnostic
 
 The adapter never injects or calls business tools. At each wake it asks the live
-agent's tool schema whether `inbox_claim`, `inbox_list`, or `inbox_view` is
-visible (including MCP-prefixed names such as
-`mcp__app-a-inbox__inbox_claim`), and stores the result as `health.programMcp`:
+agent's tool schema for the tools relevant to the binding's `wakeMode`:
+claim mode looks for `inbox_claim`/`inbox_list`/`inbox_view`; view-ack looks for
+`qq_conversation_read`/`qq_conversation_ack` (including MCP-prefixed names), and
+stores the result as `health.programMcp`:
 
 ```json
 { "state": "available" | "missing" | "unknown", "at": "..." }
@@ -371,7 +387,7 @@ visible (including MCP-prefixed names such as
 
 - `available`: the wake instructions are actionable; no warning is added;
 - `missing`: the wake still happens, but it carries
-  `注意：本会话未检测到程序 MCP 的 inbox_list/inbox_view 工具；请先挂载程序 MCP，否则本回合无法处理。`
+  `注意：本会话未检测到可处理 source 的程序 MCP 业务工具（如 qq_conversation_read/ack）；请先挂载程序 MCP，否则本回合无法处理。`
   and `/inbox status` / the WebUI strip show the same condition;
 - `unknown`: tool introspection was unavailable; no claim is made either way.
 
@@ -404,7 +420,7 @@ summary-wake run); `docs/DELIVERY.md` is the delivery report.
 - Delivery is at-most-once per revision by design.
 - Summary failure degrades to a no-summary wake; it never blocks the wake.
 - `content` is opaque and only reaches the target program through its own MCP
-  (`inbox_view`/`inbox_claim`); the DSH adapter never reads, parses, stores, or
+  (`inbox_view`/`inbox_claim` or `qq_conversation_read`); the DSH adapter never reads, parses, stores, or
   forwards it.
 - A `SUMMARY_FORBIDDEN` token keeps waking without summaries until the binding
   is re-bound or `/inbox retry` is run with a token that has `items:read`.
