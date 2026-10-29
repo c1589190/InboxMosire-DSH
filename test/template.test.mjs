@@ -112,6 +112,7 @@ test('view-ack wake mode never instructs the agent to claim', () => {
   assert.ok(!text.includes('inbox_view'))
   assert.match(text, /qq_conversation_read\(source\)/)
   assert.match(text, /qq_conversation_ack\(source\)/)
+  assert.match(text, /不要求先 read/)
   assert.match(text, /处理时以通知板为准/)
   assert.ok(!text.includes('claim 时以通知板为准'))
   assert.equal(VIEW_ACK_SUMMARY_BODY.includes('inbox_claim'), false)

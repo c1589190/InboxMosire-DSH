@@ -233,8 +233,13 @@ Agent to use each item's `source` with the program's business tools. In the
 iiBot deployment the loop is:
 
 ```text
-qq_conversation_read(source) -> process -> qq_conversation_ack(source)
+Inbox summary/source -> optional qq_conversation_read(source) -> optional send
+  -> qq_conversation_ack(source)
 ```
+
+`read` 不是 ack 的前置条件：如果 Inbox 摘要已经足够，或只是把消息消费掉，
+Agent 可以直接 ack；需要精确到某条消息时可传 `qq_conversation_ack(source, seq=N)`，
+不需要传 itemId/hash。
 
 The wake never asks a view-ack Agent to call `inbox_list` or `inbox_view`.
 If the summary is unavailable, it asks for `qq_conversation_list` to find an
