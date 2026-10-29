@@ -43,6 +43,8 @@ test('the package is a DSH bundle with a display name, locale, and icon', async 
 test('the bundle patch inserts the engine row and the tool row', async () => {
   const patch = await readFile(join(ROOT, 'cordis.patch.yml'), 'utf8')
   assert.match(patch, /- insert:/)
+  assert.match(patch, /id: inbox-mosire-profiles/)
+  assert.match(patch, /name: '@mosire\/dsh-inbox-mosire\/profiles'/)
   assert.match(patch, /id: inbox-mosire-adapter/)
   assert.match(patch, /name: '@mosire\/dsh-inbox-mosire'\n/)
   assert.match(patch, /id: inbox-mosire-tools/)
@@ -55,7 +57,7 @@ test('the plugin entry exports the Host plugin surface', async () => {
   const entry = await import(join(ROOT, 'index.js'))
   assert.equal(typeof entry.apply, 'function')
   assert.equal(entry.name, 'inbox-mosire-adapter')
-  assert.deepEqual(entry.inject, ['agents'])
+  assert.deepEqual(entry.inject, ['agents', 'inboxWakeProfiles'])
   const tools = await import(join(ROOT, 'tools.js'))
   assert.equal(typeof tools.apply, 'function')
   assert.deepEqual(tools.inject, ['tools'])

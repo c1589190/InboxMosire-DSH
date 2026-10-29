@@ -23,8 +23,8 @@ import { hasBusinessTools } from './lib/program-mcp.js'
 /** Plugin id used by loader diagnostics. */
 export const name = 'inbox-mosire-adapter'
 
-/** The adapter cannot function without the live-agent registry. */
-export const inject = ['agents']
+/** The adapter cannot function without the live-agent registry and wake profiles. */
+export const inject = ['agents', 'inboxWakeProfiles']
 
 /**
  * Wire the v2 manager's host lifecycle surface.
@@ -96,13 +96,15 @@ async function createManager(ctx, rowConfig, baseLogger) {
     logger.info('v1 状态快照已保留在 legacyV1（未丢弃）')
   }
 
+  const profileFor = () => ctx.inboxWakeProfiles.resolve(config.wakeProfile)
   const host = {
     getAgent: (sessionId) => ctx.agents.get(sessionId),
     listAgents: () => ctx.agents.list(),
     isIdle: (agent) => agent?.status === 'idle',
     followup: (agent, message) => agent.followup(message),
     now: () => Date.now(),
-    hasBusinessTools,
+    wakeProfile: profileFor,
+    hasBusinessTools: (agent, wakeMode) => hasBusinessTools(agent, wakeMode, profileFor()),
   }
   const manager = new BindingManager({
     config,

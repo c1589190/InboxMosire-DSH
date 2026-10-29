@@ -1,8 +1,9 @@
 # InboxMosire wake adapter for DeepSeek Harness.
 #
-# Two rows, one feature:
-#   inbox-mosire-adapter  long-lived wake engine (SSE, binding, followup)
-#   inbox-mosire-tools    model-facing tools that delegate to `/inbox`
+# Three rows, one feature:
+#   inbox-mosire-profiles  named wake profiles (`inboxWakeProfiles` service)
+#   inbox-mosire-adapter   long-lived wake engine (SSE, binding, followup)
+#   inbox-mosire-tools     model-facing tools that delegate to `/inbox`
 #
 # `client.js` (declared through `dsh.client`) adds the optional Web UI
 # inbox-count dock panel; it is loaded by the browser, not by a Loader row.
@@ -12,6 +13,8 @@
 # `inbox_adapter_bind`. Runtime configuration is documented in README.md; the
 # token is read from a local secret file and is never part of this row.
 - insert:
+    - id: inbox-mosire-profiles
+      name: '@mosire/dsh-inbox-mosire/profiles'
     - id: inbox-mosire-adapter
       name: '@mosire/dsh-inbox-mosire'
     - id: inbox-mosire-tools

@@ -10,6 +10,7 @@ import {
   wakeKey,
   wakeMessageId,
 } from '../lib/template.js'
+import { QQ_PROFILE } from './helpers/qq-profile.mjs'
 
 test('wake template is the contract text, field for field', () => {
   const text = renderWakeTemplate({
@@ -106,6 +107,7 @@ test('view-ack wake mode never instructs the agent to claim', () => {
     },
     programMcpMissing: true,
     wakeMode: 'view-ack',
+    profile: QQ_PROFILE,
   })
   assert.ok(!text.includes('inbox_claim'))
   assert.ok(!text.includes('inbox_list'))

@@ -5,6 +5,7 @@ import { renderWakeTemplate } from '../lib/template.js'
 import { hasBusinessTools, isBusinessToolName } from '../lib/program-mcp.js'
 import { createFakeHost, createTestAdapter, waitFor } from './helpers/fake-host.mjs'
 import { startFakeInbox } from './helpers/fake-server.mjs'
+import { QQ_PROFILE } from './helpers/qq-profile.mjs'
 
 test('normalizeItems keeps an optional source and treats it as untrusted text', () => {
   const result = normalizeItems({
@@ -93,6 +94,7 @@ test('view-ack wake renders each source as data and uses qq conversation read/ac
       maxTotalChars: 600,
     },
     wakeMode: 'view-ack',
+    profile: QQ_PROFILE,
   })
   const summaryLines = text.split('\n').filter((line) => line.startsWith('- {"itemId"'))
   assert.equal(summaryLines.length, 2)
@@ -130,6 +132,7 @@ test('view-ack source injection stays inside the escaped summary field', () => {
     },
     programMcpMissing: true,
     wakeMode: 'view-ack',
+    profile: QQ_PROFILE,
   })
   const summaryLine = text.split('\n').find((line) => line.startsWith('- {"itemId"'))
   assert.ok(summaryLine)
@@ -144,15 +147,15 @@ test('view-ack source injection stays inside the escaped summary field', () => {
 })
 
 test('program-MCP detection is wake-mode aware and accepts qq tools with prefixes', () => {
-  assert.equal(isBusinessToolName('qq_conversation_read'), true)
-  assert.equal(isBusinessToolName('mcp__iibot__qq_conversation_ack'), true)
-  assert.equal(isBusinessToolName('mcp__iibot__qq_conversation_read', 'view-ack'), true)
-  assert.equal(isBusinessToolName('qq_conversation_ack', 'view-ack'), true)
+  assert.equal(isBusinessToolName('qq_conversation_read', undefined, QQ_PROFILE), true)
+  assert.equal(isBusinessToolName('mcp__iibot__qq_conversation_ack', undefined, QQ_PROFILE), true)
+  assert.equal(isBusinessToolName('mcp__iibot__qq_conversation_read', 'view-ack', QQ_PROFILE), true)
+  assert.equal(isBusinessToolName('qq_conversation_ack', 'view-ack', QQ_PROFILE), true)
   assert.equal(isBusinessToolName('inbox_claim', 'claim'), true)
   assert.equal(isBusinessToolName('mcp__app-a-inbox__inbox_list', 'claim'), true)
   assert.equal(isBusinessToolName('inbox_claim', 'view-ack'), false)
-  assert.equal(isBusinessToolName('qq_conversation_read', 'claim'), false)
-  assert.equal(isBusinessToolName('bot_reply'), false)
+  assert.equal(isBusinessToolName('qq_conversation_read', 'claim', QQ_PROFILE), false)
+  assert.equal(isBusinessToolName('bot_reply', undefined, QQ_PROFILE), false)
 
   const viewAckAgent = {
     ctx: {
@@ -164,9 +167,9 @@ test('program-MCP detection is wake-mode aware and accepts qq tools with prefixe
       },
     },
   }
-  assert.equal(hasBusinessTools(viewAckAgent, 'view-ack'), true)
+  assert.equal(hasBusinessTools(viewAckAgent, 'view-ack', QQ_PROFILE), true)
   assert.equal(hasBusinessTools(viewAckAgent, 'claim'), false)
-  assert.equal(hasBusinessTools(viewAckAgent), true, 'no mode uses the union')
+  assert.equal(hasBusinessTools(viewAckAgent, undefined, QQ_PROFILE), true, 'no mode uses the union')
 
   const claimAgent = {
     ctx: {
@@ -179,13 +182,14 @@ test('program-MCP detection is wake-mode aware and accepts qq tools with prefixe
     },
   }
   assert.equal(hasBusinessTools(claimAgent, 'claim'), true)
-  assert.equal(hasBusinessTools(claimAgent, 'view-ack'), false)
+  assert.equal(hasBusinessTools(claimAgent, 'view-ack', QQ_PROFILE), false)
 })
 
 test('adapter view-ack wake carries a producer source through items and template', async (t) => {
   const server = await startFakeInbox()
   t.after(() => server.close())
   const host = createFakeHost()
+  host.wakeProfile = QQ_PROFILE
   host.createAgent('session-test')
   const created = await createTestAdapter({ server, host })
   t.after(() => created.adapter.stop())

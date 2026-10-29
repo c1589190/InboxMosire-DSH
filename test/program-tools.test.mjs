@@ -8,6 +8,7 @@ import {
   waitFor,
 } from './helpers/fake-host.mjs'
 import { startFakeInbox } from './helpers/fake-server.mjs'
+import { QQ_PROFILE } from './helpers/qq-profile.mjs'
 
 test('a wake without a program MCP warns before the fixed instructions', () => {
   const text = renderWakeTemplate({
@@ -25,6 +26,7 @@ test('a wake without a program MCP warns before the fixed instructions', () => {
       maxTotalChars: 600,
     },
     programMcpMissing: true,
+    profile: QQ_PROFILE,
   })
   const warningIndex = text.indexOf('未检测到可处理 source 的程序 MCP')
   const instructionIndex = text.indexOf('请直接通过你的程序 MCP')

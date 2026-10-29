@@ -38,8 +38,10 @@ The adapter only:
 It never claims, completes, pushes, reads `content`/`payload`/`payloadRef`, or
 speaks MCP. The
 target session uses its **program-owned MCP** (Mode A) for
-its own business tool set (for iiBot: `qq_conversation_read`/`qq_conversation_ack`;
-for claim-style programs: `inbox_list`/`inbox_claim`/`inbox_complete`). The central InboxMosire MCP is not
+its own business tool set (claim-style programs use
+`inbox_list`/`inbox_claim`/`inbox_complete`; view-ack programs name theirs in a
+wake profile — iiBot's `qq_*` profile lives in
+[`iiBotMosire-DSH`](https://github.com/c1589190/iiBotMosire-DSH)). The central InboxMosire MCP is not
 exposed to target sessions. The wake token must carry `status:read`,
 `events:read`, `items:read`, and `inbox:occupy`; tokens issued by
 `InboxClient.issueBinding()` do. A token without `items:read` still wakes, but
@@ -129,7 +131,28 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
 | `summaryMaxItems` | `INBOX_SUMMARY_MAX_ITEMS` | `3` (1–10) |
 | `summaryMaxTitleChars` | `INBOX_SUMMARY_MAX_TITLE_CHARS` | `80` (16–200) |
 | `summaryMaxTotalChars` | `INBOX_SUMMARY_MAX_TOTAL_CHARS` | `600` (120–4000) |
+| `wakeProfile` | `INBOX_WAKE_PROFILE` | `generic` (named profile from `inboxWakeProfiles`) |
 | `inboxId` / `tokenFile` / `sessionId` | legacy `INBOX_*` | used only for v1 state migration |
+
+## Wake profiles
+
+The adapter's control flow is program-agnostic; the program's tool names and
+wording live in a named **wake profile**. `inbox-mosire-profiles` provides the
+`inboxWakeProfiles` service; the built-in `generic` profile names no tools.
+
+A downstream bundle registers a profile and selects it:
+
+```yaml
+- id: inbox-mosire-adapter
+  name: '@mosire/dsh-inbox-mosire'
+  config:
+    wakeProfile: iibot
+```
+
+The iiBot profile lives in
+[`iiBotMosire-DSH`](https://github.com/c1589190/iiBotMosire-DSH). If the named
+profile is missing, the adapter logs `唤醒 profile 未注册` and skips that wake
+instead of falling back to generic.
 
 ## State (v2)
 
@@ -219,7 +242,7 @@ When the summary succeeds, the followup carries at most `summaryMaxItems` lines:
 inbox={inboxId} revision={revision} available={available} channels=[{changedChannels}]
 
 摘要（最多 {N} 条；可能已变化，claim 时以通知板为准）:
-- {"itemId":"itm_...","channel":"ticket","kind":"reply","source":"qq_group/bot-1/955432692","summary":"..."}
+- {"itemId":"itm_...","channel":"ticket","kind":"reply","source":"thread/42","summary":"..."}
 - {"itemId":"itm_...","channel":"tweet-review","kind":"review","summary":"..."}
 - 还有 {remaining} 条未展示
 
@@ -228,22 +251,16 @@ inbox={inboxId} revision={revision} available={available} channels=[{changedChan
 如果当前没有可处理项，结束本回合，不要轮询。
 ```
 
-For `wakeMode=view-ack`, the bounded summary/fixed body instead tells the
-Agent to use each item's `source` with the program's business tools. In the
-iiBot deployment the loop is:
-
-```text
-Inbox summary/source -> optional qq_conversation_read(source) -> optional send
-  -> qq_conversation_ack(source)
-```
-
-`read` 不是 ack 的前置条件：如果 Inbox 摘要已经足够，或只是把消息消费掉，
-Agent 可以直接 ack；需要精确到某条消息时可传 `qq_conversation_ack(source, seq=N)`，
-不需要传 itemId/hash。
+For `wakeMode=view-ack`, the bounded summary/fixed body tells the Agent to use
+each item's `source` with the program's business tools. The concrete tool names
+and wording come from the binding's **wake profile**. The built-in `generic`
+profile names no tools; iiBot's profile (`qq_conversation_read` /
+`qq_conversation_ack`, direct ack without read) is maintained in
+[`iiBotMosire-DSH`](https://github.com/c1589190/iiBotMosire-DSH).
 
 The wake never asks a view-ack Agent to call `inbox_list` or `inbox_view`.
-If the summary is unavailable, it asks for `qq_conversation_list` to find an
-unread source before reading it.
+If the summary is unavailable, the body asks the profile's list tool when it
+names one.
 
 When the summary is disabled or fails, the fixed no-summary body is used
 instead, so the wake still happens:
@@ -320,8 +337,9 @@ Bindings can use one of two explicit processing lifecycles:
 
 - `claim` (default): the wake text tells the Agent to call `inbox_claim`;
 - `view-ack`: the wake text tells the Agent to use each item's `source` with the
-  program's own business tools; iiBot uses `qq_conversation_read(source)` and
-  `qq_conversation_ack(source)`. It never instructs the Agent to claim.
+  program's own business tools. Tool names come from the selected wake profile;
+  iiBot's profile names `qq_conversation_read` / `qq_conversation_ack`. It never
+  instructs the Agent to claim.
 
 `view-ack` is for programs such as the bot-first message board where
 `bot_thread_ack` archives a still-available item with `inbox_delete`. It does
@@ -383,7 +401,7 @@ that tool's schema.
 The adapter never injects or calls business tools. At each wake it asks the live
 agent's tool schema for the tools relevant to the binding's `wakeMode`:
 claim mode looks for `inbox_claim`/`inbox_list`/`inbox_view`; view-ack looks for
-`qq_conversation_read`/`qq_conversation_ack` (including MCP-prefixed names), and
+the tool names in the selected wake profile (including MCP-prefixed names), and
 stores the result as `health.programMcp`:
 
 ```json
@@ -392,7 +410,7 @@ stores the result as `health.programMcp`:
 
 - `available`: the wake instructions are actionable; no warning is added;
 - `missing`: the wake still happens, but it carries
-  `注意：本会话未检测到可处理 source 的程序 MCP 业务工具（如 qq_conversation_read/ack）；请先挂载程序 MCP，否则本回合无法处理。`
+  `注意：本会话未检测到可处理 source 的程序 MCP 业务工具；请先挂载程序 MCP，否则本回合无法处理。`
   and `/inbox status` / the WebUI strip show the same condition;
 - `unknown`: tool introspection was unavailable; no claim is made either way.
 
@@ -427,7 +445,7 @@ summary-wake run); `docs/DELIVERY.md` is the delivery report.
 - Delivery is at-most-once per revision by design.
 - Summary failure degrades to a no-summary wake; it never blocks the wake.
 - `content` is opaque and only reaches the target program through its own MCP
-  (`inbox_view`/`inbox_claim` or `qq_conversation_read`); the DSH adapter never reads, parses, stores, or
+  (`inbox_view`/`inbox_claim` or the profile's business tools); the DSH adapter never reads, parses, stores, or
   forwards it.
 - A `SUMMARY_FORBIDDEN` token keeps waking without summaries until the binding
   is re-bound or `/inbox retry` is run with a token that has `items:read`.

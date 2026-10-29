@@ -14,6 +14,7 @@ import { wireEngineEvents } from '../../index.js'
 import { InboxClient } from '../../lib/inbox-client.js'
 import { createLogger } from '../../lib/log.js'
 import { StateStore, normalizeHostState } from '../../lib/state.js'
+import { GENERIC_WAKE_PROFILE, WakeProfileRegistry } from '../../lib/wake-profile.js'
 
 /**
  * Create a fake host.
@@ -78,6 +79,7 @@ export function createFakeHost({ now } = {}) {
       },
       schemas: () => toolDefinitions.map(({ name: toolName, description, parameters }) => ({ name: toolName, description, parameters })),
     },
+    inboxWakeProfiles: new WakeProfileRegistry(),
   }
 
   const ctx = {
@@ -111,6 +113,7 @@ export function createFakeHost({ now } = {}) {
     agents: services.agents,
     commands: services.commands,
     tools: services.tools,
+    inboxWakeProfiles: services.inboxWakeProfiles,
   }
 
   /**
@@ -175,6 +178,8 @@ export function createFakeHost({ now } = {}) {
     disposers,
     /** Whether a program-owned MCP business tool should appear available. */
     businessTools: true,
+    /** Wake profile returned to the adapter; tests may replace it. */
+    wakeProfile: GENERIC_WAKE_PROFILE,
     baseLogger,
     emit,
     createAgent,
@@ -298,6 +303,7 @@ export async function createTestAdapter({
       isIdle: (agent) => agent?.status === 'idle',
       followup: (agent, message) => agent.followup(message),
       now: host.now,
+      wakeProfile: () => host.wakeProfile,
       hasBusinessTools: () => host.businessTools !== false,
     },
     tokenSource: { kind: 'inline' },
@@ -381,6 +387,7 @@ export async function createTestManager({ host, overrides = {}, stateFile, state
       isIdle: (agent) => agent?.status === 'idle',
       followup: (agent, message) => agent.followup(message),
       now: host.now,
+      wakeProfile: () => host.wakeProfile,
       hasBusinessTools: () => host.businessTools !== false,
     },
     opsLog: new OpsLog({ file: join(dirname(file), 'ops.jsonl'), logger }),
