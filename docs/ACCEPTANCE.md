@@ -508,3 +508,34 @@ occupancy cleanup.
 - `restSeconds=0` clears the deadline and permits one reconcile/wake.
 - Failed or unrelated tools do not set rest.
 - `restUntil` survives state normalization and is shown in status.
+
+## v1.8 agent-scoped program-MCP diagnostic (2026-10-30)
+
+- Source: Bot trial-run friction F-014 — status said `programMcp=missing` while
+  `qq_conversation_read/ack` were visible in the same turn.
+- The DSH tool registry's `schemas(scope)` contract treats an omitted scope as
+  the global view. The adapter now calls `schemas(agent)` so session-injected MCP
+  tools are visible to the diagnostic.
+- Unit evidence: `test/source-wake.test.mjs` added a scope-sensitive registry
+  stub; it fails under the old unscoped call and passes with the fix.
+- Gate: `npm test` PASS, **149 tests / 146 pass / 3 skipped / 0 fail**.
+- Live host reload/restart and `programMcp: missing → available` observation:
+  `NOT_RUN`.
+
+## v1.9 profile-driven complete summary and compact view-ack (2026-10-30)
+
+- Source: D-032 and the iiBot `digest_complete` producer kind.
+- A profile may declare `completeKinds` and `compactViewAckItems`. The generic
+  adapter maps those opaque kinds to a compact view-ack row:
+  `{"source":"...","summary":"...","complete":true}`.
+- Complete summaries are not truncated by the ordinary 80-character preview
+  bound; they are capped at 512. If the row cannot fit the wake budget, it
+  degrades to an incomplete compact row and the profile body must ask for read.
+- Claim mode and profiles without these fields keep the legacy
+  `itemId/channel/kind/source/summary` row.
+- The adapter still never reads `content`, payload, payloadRef, or tokens.
+- Unit evidence: `test/template.test.mjs` covers 512-character complete boundary,
+  >512 degradation, compact source-only rows, claim-mode compatibility and
+  profile isolation.
+- Gate: `npm test` PASS, **149 tests / 146 pass / 3 skipped / 0 fail**.
+- Real DSH reload and iiBot `digest_complete` end-to-end: `NOT_RUN`.

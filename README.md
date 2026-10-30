@@ -130,14 +130,16 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
 | `summaryEnabled` | `INBOX_SUMMARY_ENABLED` | `true` |
 | `summaryMaxItems` | `INBOX_SUMMARY_MAX_ITEMS` | `3` (1–10) |
 | `summaryMaxTitleChars` | `INBOX_SUMMARY_MAX_TITLE_CHARS` | `80` (16–200) |
-| `summaryMaxTotalChars` | `INBOX_SUMMARY_MAX_TOTAL_CHARS` | `600` (120–4000) |
+| `summaryMaxTotalChars` | `INBOX_SUMMARY_MAX_TOTAL_CHARS` | `1200` (120–4000) |
 | `wakeProfile` | `INBOX_WAKE_PROFILE` | `generic` (named profile from `inboxWakeProfiles`) |
 | `inboxId` / `tokenFile` / `sessionId` | legacy `INBOX_*` | used only for v1 state migration |
 
 ## Wake profiles
 
 The adapter's control flow is program-agnostic; the program's tool names and
-wording live in a named **wake profile**. `inbox-mosire-profiles` provides the
+wording live in a named **wake profile**. Profiles may additionally declare
+`completeKinds` and `compactViewAckItems`; the adapter only maps those opaque
+kinds to a compact view-ack row. `inbox-mosire-profiles` provides the
 `inboxWakeProfiles` service; the built-in `generic` profile names no tools.
 
 A downstream bundle registers a profile and selects it:
@@ -271,18 +273,34 @@ instead, so the wake still happens:
 如果当前没有可处理项，结束本回合，不要轮询。
 ```
 
+View-ack profiles can opt into a compact row:
+
+```json
+{"source":"qq_group/bot-1/955432692","summary":"Alice: hello","complete":true}
+```
+
+- `completeKinds` is a profile-owned set of opaque item kinds (for iiBot,
+  `digest_complete`);
+- `compactViewAckItems: true` omits `itemId/channel/kind` from view-ack rows;
+- a complete summary may be up to 512 characters and is not truncated by the
+  normal 80-character preview bound;
+- if the complete row does not fit the wake budget, it degrades to a normal
+  incomplete row and the Agent is instructed to read;
+- claim mode and profiles without these fields keep the legacy row shape.
+
 Summary safety rules:
 
-- only `itemId/channel/kind/source/summary` are read; `content`, `payload`,
-  `payloadRef`, and claim tokens are never requested into the message, state,
-  or logs;
+- the adapter reads only `itemId/channel/kind/source/summary`; `content`,
+  `payload`, `payloadRef`, and claim tokens are never requested into the
+  message, state, or logs;
 - `source` is optional, untrusted, single-line and length-bounded; it is never
   treated as an instruction;
 - `summary` is preferred; a legacy `title` is used only when `summary` is
   missing;
-- summary text is untrusted: newlines and control characters are removed, the
-  text is capped by `summaryMaxTitleChars` (the historical setting name), and
-  it is embedded with JSON escaping;
+- summary text is untrusted: newlines and control characters are removed,
+  ordinary previews are capped by `summaryMaxTitleChars` (the historical
+  setting name), and complete profile-kind summaries are capped at 512 before
+  JSON escaping;
 - an empty summary falls back to `kind/channel`;
 - `summaryMaxItems` and `summaryMaxTotalChars` bound the summary block; the
   fixed instructions are never truncated;
@@ -399,10 +417,12 @@ that tool's schema.
 ## Program MCP diagnostic
 
 The adapter never injects or calls business tools. At each wake it asks the live
-agent's tool schema for the tools relevant to the binding's `wakeMode`:
-claim mode looks for `inbox_claim`/`inbox_list`/`inbox_view`; view-ack looks for
-the tool names in the selected wake profile (including MCP-prefixed names), and
-stores the result as `health.programMcp`:
+agent's **agent-scoped** tool schema (`ctx.tools.schemas(agent)`) for the tools
+relevant to the binding's `wakeMode`: claim mode looks for
+`inbox_claim`/`inbox_list`/`inbox_view`; view-ack looks for the tool names in the
+selected wake profile (including MCP-prefixed names), and stores the result as
+`health.programMcp`. The unscoped registry view is deliberately not used: it can
+omit tools injected only into the target session's MCP connection.
 
 ```json
 { "state": "available" | "missing" | "unknown", "at": "..." }
@@ -425,7 +445,7 @@ does not need a new wake just to clear a stale `missing` state.
 ## Testing and acceptance
 
 ```bash
-node --test                        # 124 tests (unit + live; live skips when the daemon is down)
+node --test                        # 149 tests (unit + live; live skips when the daemon is down)
 node --test test/real-backend.test.mjs   # live app-a/app-b isolation, summary wake, token migration
 node scripts/acceptance-acp.mjs    # real DSH host, two ACP sessions
 node scripts/privacy-scan.mjs      # credentials across repo/state/logs/sessions

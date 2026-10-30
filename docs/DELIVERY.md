@@ -116,7 +116,9 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
   summaries fall back to `kind/channel` (template :151/:213).
 - `summaryEnabled`/`summaryMaxItems`/`summaryMaxTitleChars`/`summaryMaxTotalChars`
   resolve from row config, `INBOX_SUMMARY_*`, the local file, or defaults
-  (config :229–:270).
+  (config :229–:270). `summaryMaxTotalChars` defaults to 1200 so a 512-char
+  complete row can fit; profile-declared `completeKinds` map to compact
+  view-ack rows without changing Inbox core.
 - `/inbox status` and the adapter status tool print the config, the last outcome
   (`ok/empty/degraded/forbidden/disabled`), `shown/remaining`, timestamp, code,
   and message; item summary text is never stored or logged (adapter :1162/:1221,
@@ -286,3 +288,20 @@ repository.
 - Rest is adapter state and does not mute the Inbox board for other sessions.
 - Bot must add the optional `restSeconds` field to its `bot_thread_ack` schema;
   Inbox's own `inbox_complete` / `inbox_delete` MCP schemas already accept it.
+
+## v1.8 agent-scoped program-MCP detection (2026-10-30)
+
+- **Observed friction**: `health.programMcp` reported `missing` while
+  `qq_conversation_read/ack` were callable in the same wake turn. This made the
+  wake warning untrustworthy.
+- **Root cause**: `hasBusinessTools` called `ctx.tools.schemas()` without a
+  scope. The DSH tool registry documents that an omitted scope is the global
+  view; MCP tools injected into one session may be absent from that view.
+- **Fix**: pass the live `agent` as the schema scope:
+  `ctx.tools.schemas(agent)`. Wake-mode/profile filtering and MCP-prefixed name
+  matching are unchanged.
+- **Verification**: `test/source-wake.test.mjs` now includes a registry stub
+  that returns tools only for the agent-scoped view. `npm test` PASS:
+  149 tests, 146 pass, 3 live-skipped, 0 fail.
+- **Not verified**: the running DSH host still holds the old module until a
+  reload/restart. Live `programMcp` transition is `NOT_RUN`.

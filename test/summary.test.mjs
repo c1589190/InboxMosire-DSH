@@ -284,7 +284,7 @@ test('summary configuration defaults are bounded and overridable', () => {
   assert.equal(defaults.summaryEnabled, true)
   assert.equal(defaults.summaryMaxItems, 3)
   assert.equal(defaults.summaryMaxTitleChars, 80)
-  assert.equal(defaults.summaryMaxTotalChars, 600)
+  assert.equal(defaults.summaryMaxTotalChars, 1200)
 
   const tuned = resolveConfig(
     { summaryMaxItems: 99, summaryMaxTitleChars: 1, summaryMaxTotalChars: 99999 },

@@ -13,6 +13,8 @@ test('the generic profile names no program tools', () => {
   assert.equal(GENERIC_WAKE_PROFILE.name, 'generic')
   assert.equal(GENERIC_WAKE_PROFILE.businessTools, null)
   assert.equal(GENERIC_WAKE_PROFILE.programMcpWarning, GENERIC_PROGRAM_MCP_WARNING)
+  assert.deepEqual(GENERIC_WAKE_PROFILE.completeKinds, [])
+  assert.equal(GENERIC_WAKE_PROFILE.compactViewAckItems, false)
   assert.ok(!GENERIC_WAKE_PROFILE.viewAckBody.includes('qq_'))
 })
 
@@ -22,19 +24,25 @@ test('normalizeWakeProfile validates and freezes a named profile', () => {
     programMcpWarning: 'warning',
     viewAckBody: ['a', 'b'],
     viewAckSummaryBody: 'summary',
+    completeKinds: ['digest_complete', 'digest_complete', 'other.kind'],
+    compactViewAckItems: true,
   })
   assert.equal(profile.name, 'iibot')
   assert.deepEqual(profile.businessTools, ['qq_conversation_read', 'qq_conversation_ack'])
   assert.equal(profile.programMcpWarning, 'warning')
   assert.equal(profile.viewAckBody, 'a\nb')
   assert.equal(profile.viewAckSummaryBody, 'summary')
+  assert.deepEqual(profile.completeKinds, ['digest_complete', 'other.kind'])
+  assert.equal(profile.compactViewAckItems, true)
   assert.ok(Object.isFrozen(profile))
   assert.ok(Object.isFrozen(profile.businessTools))
+  assert.ok(Object.isFrozen(profile.completeKinds))
 })
 
 test('normalizeWakeProfile rejects bad names and tool names', () => {
   assert.throws(() => normalizeWakeProfile('bad name', {}), /name is invalid/)
   assert.throws(() => normalizeWakeProfile('ok', { businessTools: ['bad tool'] }), /tool name is invalid/)
+  assert.throws(() => normalizeWakeProfile('ok', { completeKinds: ['bad kind'] }), /complete kind is invalid/)
 })
 
 test('the registry resolves generic by default and registers named profiles', () => {
