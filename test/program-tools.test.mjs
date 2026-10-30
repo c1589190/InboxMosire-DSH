@@ -8,9 +8,8 @@ import {
   waitFor,
 } from './helpers/fake-host.mjs'
 import { startFakeInbox } from './helpers/fake-server.mjs'
-import { QQ_PROFILE } from './helpers/qq-profile.mjs'
 
-test('a wake without a program MCP warns before the fixed instructions', () => {
+test('view-ack wake never renders a program-MCP warning or tool names', () => {
   const text = renderWakeTemplate({
     inboxId: 'app-a',
     revision: 1,
@@ -18,26 +17,23 @@ test('a wake without a program MCP warns before the fixed instructions', () => {
     channels: ['ticket'],
     summary: {
       items: [
-        { itemId: 'itm_1', channel: 'ticket', kind: 'reply', summary: '工单更新' },
+        { itemId: 'itm_1', channel: 'ticket', kind: 'reply', source: 'ticket/1',
+          summary: '工单更新' },
       ],
       remaining: 0,
       maxItems: 3,
       maxTitleChars: 80,
       maxTotalChars: 600,
     },
-    programMcpMissing: true,
-    profile: QQ_PROFILE,
+    wakeMode: 'view-ack',
   })
-  const warningIndex = text.indexOf('未检测到可处理 source 的程序 MCP')
-  const instructionIndex = text.indexOf('请直接通过你的程序 MCP')
-  assert.ok(warningIndex > 0, text)
-  assert.ok(instructionIndex > warningIndex, 'the warning comes before the instructions')
-  assert.ok(text.includes('可处理 source 的程序 MCP 业务工具'))
-  assert.ok(text.includes('qq_conversation_read/ack'))
-  assert.ok(!text.includes('inbox_list/inbox_view'))
+  assert.ok(!text.includes('未检测到'))
+  assert.ok(!text.includes('qq_conversation'))
+  assert.ok(!text.includes('inbox_claim'))
+  assert.match(text, /available=0 时结束本回合，不要轮询/)
 })
 
-test('adapter records programMcp=missing and warns without blocking the wake', async (t) => {
+test('claim mode records programMcp=missing without blocking or warning the wake', async (t) => {
   const server = await startFakeInbox()
   t.after(() => server.close())
   const host = createFakeHost()
@@ -50,14 +46,14 @@ test('adapter records programMcp=missing and warns without blocking the wake', a
   server.push({ channel: 'ticket', summary: '需要程序 MCP' })
   await waitFor(() => host.followups.length === 1, { label: 'wake' })
   const text = host.followups[0].message.content[0].text
-  assert.match(text, /未检测到可处理 source 的程序 MCP/)
+  assert.ok(!text.includes('未检测到'))
   assert.match(text, /"summary":"需要程序 MCP"/)
   assert.equal(created.adapter.snapshot().health.programMcp.state, 'missing')
   assert.match(created.adapter.snapshot().health.programMcp.at, /^\d{4}-/)
   assert.equal(created.adapter.snapshot().programMcp.state, 'missing')
 })
 
-test('adapter records programMcp=available and omits the warning', async (t) => {
+test('claim mode records programMcp=available when claim tools are visible', async (t) => {
   const server = await startFakeInbox()
   t.after(() => server.close())
   const host = createFakeHost()
@@ -69,17 +65,15 @@ test('adapter records programMcp=available and omits the warning', async (t) => 
   await waitFor(() => server.connectionCount === 1, { label: 'SSE' })
   server.push({ channel: 'ticket', summary: '程序 MCP 已就绪' })
   await waitFor(() => host.followups.length === 1, { label: 'wake' })
-  const text = host.followups[0].message.content[0].text
-  assert.ok(!text.includes('未检测到程序 MCP'))
   assert.equal(created.adapter.snapshot().programMcp.state, 'available')
 })
 
-
-test('program-MCP detection accepts prefixed inbox_view without inbox_claim', () => {
-  assert.equal(isBusinessToolName('inbox_view'), true)
-  assert.equal(isBusinessToolName('mcp__iibot__inbox_view'), true)
-  assert.equal(isBusinessToolName('mcp__iibot__inbox_claim'), true)
-  assert.equal(isBusinessToolName('mcp__iibot__bot_reply'), false)
+test('claim-mode detection accepts prefixed inbox_view without inbox_claim', () => {
+  assert.equal(isBusinessToolName('inbox_view', 'claim'), true)
+  assert.equal(isBusinessToolName('mcp__iibot__inbox_view', 'claim'), true)
+  assert.equal(isBusinessToolName('mcp__iibot__inbox_claim', 'claim'), true)
+  assert.equal(isBusinessToolName('mcp__iibot__bot_reply', 'claim'), false)
+  assert.equal(isBusinessToolName('inbox_view', 'view-ack'), false)
   const agent = {
     ctx: {
       tools: {
@@ -87,5 +81,6 @@ test('program-MCP detection accepts prefixed inbox_view without inbox_claim', ()
       },
     },
   }
-  assert.equal(hasBusinessTools(agent), true)
+  assert.equal(hasBusinessTools(agent, 'claim'), true)
+  assert.equal(hasBusinessTools(agent, 'view-ack'), undefined)
 })

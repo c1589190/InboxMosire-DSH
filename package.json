@@ -1,9 +1,9 @@
 {
   "name": "@mosire/dsh-inbox-mosire",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
-  "description": "InboxMosire v2 multi-binding wake adapter for DeepSeek Harness: bounded summary wakes, per-binding SSE/cursor/wake isolation, advisory occupancy, and a WebUI inbox-count dock panel.",
+  "description": "InboxMosire v2 multi-binding wake adapter for DeepSeek Harness: generic compact view-ack wakes, bounded summaries, per-binding SSE/cursor/wake isolation, advisory occupancy, and a WebUI inbox-count dock panel.",
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json",

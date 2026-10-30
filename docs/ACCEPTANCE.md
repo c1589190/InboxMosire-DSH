@@ -524,6 +524,9 @@ occupancy cleanup.
 
 ## v1.9 profile-driven complete summary and compact view-ack (2026-10-30)
 
+> Historical: superseded by v1.10. Profiles no longer declare business tools,
+> complete kinds, compact flags, or readiness warnings.
+
 - Source: D-032 and the iiBot `digest_complete` producer kind.
 - A profile may declare `completeKinds` and `compactViewAckItems`. The generic
   adapter maps those opaque kinds to a compact view-ack row:
@@ -539,3 +542,22 @@ occupancy cleanup.
   profile isolation.
 - Gate: `npm test` PASS, **149 tests / 146 pass / 3 skipped / 0 fail**.
 - Real DSH reload and iiBot `digest_complete` end-to-end: `NOT_RUN`.
+
+
+## v1.10 generic compact view-ack and profile retirement (2026-10-31)
+
+- Profile contract now contains only generic `viewAckBody` /
+  `viewAckSummaryBody`; business tool names, complete-kind allowlists, compact
+  flags, and readiness warnings are rejected by omission and no longer stored.
+- View-ack rows are generic `source/kind/summary`, keep the opaque kind, omit
+  `itemId/channel`, and add `truncated:true` when the wake budget forces a
+  shorter summary.
+- `available` remains in the wake header; generic bodies use it for the
+  "finish, don't poll" rule.
+- Claim mode keeps the legacy row shape and the generic Inbox claim-tool
+  readiness probe. View-ack readiness is `unknown`, not guessed from `qq_*`
+  names.
+- Missing configured wake profiles fall back to `generic`.
+- Gate: `npm test` PASS, **150 tests / 147 pass / 3 live-skipped / 0 fail**.
+- Real DSH reload, generic-view-ack live wake, and iiBot end-to-end remain
+  `NOT_RUN`.

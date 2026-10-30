@@ -2,47 +2,42 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  GENERIC_PROGRAM_MCP_WARNING,
   GENERIC_WAKE_PROFILE,
   apply,
   normalizeWakeProfile,
   WakeProfileRegistry,
 } from '../lib/wake-profile.js'
 
-test('the generic profile names no program tools', () => {
+test('the generic profile carries only generic view-ack bodies', () => {
   assert.equal(GENERIC_WAKE_PROFILE.name, 'generic')
-  assert.equal(GENERIC_WAKE_PROFILE.businessTools, null)
-  assert.equal(GENERIC_WAKE_PROFILE.programMcpWarning, GENERIC_PROGRAM_MCP_WARNING)
-  assert.deepEqual(GENERIC_WAKE_PROFILE.completeKinds, [])
-  assert.equal(GENERIC_WAKE_PROFILE.compactViewAckItems, false)
+  assert.deepEqual(Object.keys(GENERIC_WAKE_PROFILE).sort(),
+    ['name', 'viewAckBody', 'viewAckSummaryBody'])
   assert.ok(!GENERIC_WAKE_PROFILE.viewAckBody.includes('qq_'))
+  assert.ok(!GENERIC_WAKE_PROFILE.viewAckBody.includes('inbox_claim'))
+  assert.match(GENERIC_WAKE_PROFILE.viewAckBody, /available=0/)
 })
 
-test('normalizeWakeProfile validates and freezes a named profile', () => {
-  const profile = normalizeWakeProfile('iibot', {
-    businessTools: ['qq_conversation_read', 'qq_conversation_read', 'qq_conversation_ack'],
-    programMcpWarning: 'warning',
+test('normalizeWakeProfile freezes generic bodies and ignores business fields', () => {
+  const profile = normalizeWakeProfile('test', {
     viewAckBody: ['a', 'b'],
     viewAckSummaryBody: 'summary',
-    completeKinds: ['digest_complete', 'digest_complete', 'other.kind'],
+    businessTools: ['qq_conversation_read'],
+    programMcpWarning: 'warning',
+    completeKinds: ['digest_complete'],
     compactViewAckItems: true,
   })
-  assert.equal(profile.name, 'iibot')
-  assert.deepEqual(profile.businessTools, ['qq_conversation_read', 'qq_conversation_ack'])
-  assert.equal(profile.programMcpWarning, 'warning')
+  assert.equal(profile.name, 'test')
   assert.equal(profile.viewAckBody, 'a\nb')
   assert.equal(profile.viewAckSummaryBody, 'summary')
-  assert.deepEqual(profile.completeKinds, ['digest_complete', 'other.kind'])
-  assert.equal(profile.compactViewAckItems, true)
+  assert.equal(Object.hasOwn(profile, 'businessTools'), false)
+  assert.equal(Object.hasOwn(profile, 'programMcpWarning'), false)
+  assert.equal(Object.hasOwn(profile, 'completeKinds'), false)
+  assert.equal(Object.hasOwn(profile, 'compactViewAckItems'), false)
   assert.ok(Object.isFrozen(profile))
-  assert.ok(Object.isFrozen(profile.businessTools))
-  assert.ok(Object.isFrozen(profile.completeKinds))
 })
 
-test('normalizeWakeProfile rejects bad names and tool names', () => {
+test('normalizeWakeProfile rejects a bad name', () => {
   assert.throws(() => normalizeWakeProfile('bad name', {}), /name is invalid/)
-  assert.throws(() => normalizeWakeProfile('ok', { businessTools: ['bad tool'] }), /tool name is invalid/)
-  assert.throws(() => normalizeWakeProfile('ok', { completeKinds: ['bad kind'] }), /complete kind is invalid/)
 })
 
 test('the registry resolves generic by default and registers named profiles', () => {
@@ -50,11 +45,11 @@ test('the registry resolves generic by default and registers named profiles', ()
   assert.equal(registry.resolve(undefined), GENERIC_WAKE_PROFILE)
   assert.equal(registry.resolve(''), GENERIC_WAKE_PROFILE)
   assert.equal(registry.resolve('missing'), undefined)
-  const dispose = registry.register('iibot', { businessTools: ['qq_conversation_read'] })
-  assert.equal(registry.resolve('iibot').businessTools[0], 'qq_conversation_read')
-  assert.deepEqual(registry.names(), ['generic', 'iibot'])
+  const dispose = registry.register('custom', { viewAckBody: 'hello' })
+  assert.equal(registry.resolve('custom').viewAckBody, 'hello')
+  assert.deepEqual(registry.names(), ['custom', 'generic'])
   dispose()
-  assert.equal(registry.resolve('iibot'), undefined)
+  assert.equal(registry.resolve('custom'), undefined)
 })
 
 test('apply provides the inboxWakeProfiles service', () => {

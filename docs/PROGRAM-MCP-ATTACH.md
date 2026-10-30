@@ -43,26 +43,28 @@ auth: Bearer IIBOT_CONTROL_TOKEN
 
 ## 验收
 
-目标 session 的 `tools/list` 至少应出现：
+目标 session 的 `tools/list` 应出现程序自己的业务工具，例如 iiBot 的：
 
 ```text
-mcp__iibot__inbox_list
-mcp__iibot__inbox_view
-mcp__iibot__inbox_claim
+mcp__iibot__qq_conversation_read
+mcp__iibot__qq_conversation_ack
+mcp__iibot__qq_conversation_send
 ...
 ```
 
 然后：
 
 1. 绑定 inbox；
-2. 调 `inbox_adapter_status`，它会主动重新探测当前 session 的 tool schema；
-3. 确认 `programMcp=available`；
-4. no-claim 程序 bind 时传 `wakeMode: "view-ack"`；
-5. 推一条测试通知，确认 wake 文本不含 `inbox_claim`；
-6. 确认 adapter 仍然不 claim/complete/push。
+2. no-claim 程序 bind 时传 `wakeMode: "view-ack"`；
+3. 调 `inbox_adapter_status`；view-ack 下 `programMcp=unknown` 是预期值，
+   通用适配器不再按业务工具名猜测 readiness；
+4. 推一条测试通知，确认 wake 文本不含 `inbox_claim`/`qq_*` 等业务工具名；
+5. 由顶层 Agent 根据程序 MCP 的工具 description 自行完成 read/send/ack；
+6. 确认 adapter 仍然不 claim/complete/push，也不调用业务工具。
 
-如果工具已经出现但状态仍是 `missing`，先检查 DSH 实际公开的工具名前缀是否以
-`__inbox_list`、`__inbox_view` 或 `__inbox_claim` 结尾；再检查 session scope，
+claim 模式仍会探测 `inbox_claim/inbox_list/inbox_view`；如果 claim 工具已出现但
+状态仍是 `missing`，检查 DSH 实际公开的工具名前缀是否以
+`__inbox_list`、`__inbox_view` 或 `__inbox_claim` 结尾，再检查 session scope，
 不要先改 Inbox core。
 
 ## WebUI 不再控制 MCP
@@ -72,5 +74,6 @@ mcp__iibot__inbox_claim
 配置项也已删除。面板只显示绑定 inbox 的 `host:port` 和一颗挂起/恢复按钮。
 
 需要挂载或修复 `custom-iibot` 时，直接使用 MCP connector 插件
-（`mcp_connector_*` 工具或连接器页面）；程序 MCP 的诊断仍可通过
-`inbox_adapter_status` 的 `programMcp:` 行与 wake 文本里的缺失警告观察。
+（`mcp_connector_*` 工具或连接器页面）。view-ack 的 readiness 由程序 MCP
+连接器与工具 description 自证；通用 adapter 不再在 wake 文本里注入业务工具名
+或缺失警告。

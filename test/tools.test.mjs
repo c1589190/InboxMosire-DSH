@@ -92,10 +92,11 @@ test('inbox_adapter_bind accepts explicit fields and reports per-caller status',
 
   const status = tool(host, 'inbox_adapter_status')
   const self = await status.execute({}, { agent: { id: 'session-test' }, signal: SIGNAL })
-  assert.match(self.text, /programMcp: state=available/)
+  // view-ack no longer mirrors program tool names; readiness stays unknown.
+  assert.match(self.text, /programMcp: state=unknown/)
   host.businessTools = false
   const refreshed = await status.execute({}, { agent: { id: 'session-test' }, signal: SIGNAL })
-  assert.match(refreshed.text, /programMcp: state=missing/)
+  assert.match(refreshed.text, /programMcp: state=unknown/)
   host.businessTools = true
 
   const other = await status.execute({}, { agent: { id: 'session-other' }, signal: SIGNAL })

@@ -51,7 +51,7 @@ test('manager panel status exposes counts, address, and last operation', async (
   assert.equal(created.manager.panelStatus('session-a').programMcp, undefined)
   const programMcpText = created.manager.statusText('session-a')
   assert.match(programMcpText, /programMcp: state=missing/)
-  assert.match(programMcpText, /wakeProfile=/)
+  assert.match(programMcpText, /claim 模式未检测到 inbox_claim\/list\/view/)
   assert.ok(!programMcpText.includes('inbox_list/inbox_view'))
   await created.manager.suspend('session-a')
   assert.equal(created.manager.bindingFor('session-a').enabled, false)

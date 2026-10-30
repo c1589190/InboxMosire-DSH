@@ -97,6 +97,7 @@ async function createManager(ctx, rowConfig, baseLogger) {
   }
 
   const profileFor = () => ctx.inboxWakeProfiles.resolve(config.wakeProfile)
+    ?? ctx.inboxWakeProfiles.resolve('generic')
   const host = {
     getAgent: (sessionId) => ctx.agents.get(sessionId),
     listAgents: () => ctx.agents.list(),
@@ -104,7 +105,7 @@ async function createManager(ctx, rowConfig, baseLogger) {
     followup: (agent, message) => agent.followup(message),
     now: () => Date.now(),
     wakeProfile: profileFor,
-    hasBusinessTools: (agent, wakeMode) => hasBusinessTools(agent, wakeMode, profileFor()),
+    hasBusinessTools: (agent, wakeMode) => hasBusinessTools(agent, wakeMode),
   }
   const manager = new BindingManager({
     config,

@@ -23,7 +23,7 @@ never claims, completes, pushes, reads content/payload/payloadRef, or speaks MCP
 | `lib/runtime.js` | In-process manager bridge between the engine row and the tool row. |
 | `test/summary.test.mjs` | 28 summary tests: summary/title fallback, template, config, degrade/forbidden, restart, two-binding isolation, update. |
 | `test/panel.test.mjs` | Host panel projection/RPC validation/refresh/no-throw. |
-| `test/program-tools.test.mjs` | Wake warning/state for `programMcp` available vs missing. |
+| `test/program-tools.test.mjs` | Claim-mode `programMcp` state; view-ack readiness is intentionally unknown. |
 | `test/turn-end.test.mjs` | Running turn defers injection; a new revision bypasses no-progress backoff at turn end. |
 | `test/client-panel.test.mjs` | Client bundle registration, locale parity, rendered bound/suspended states, address + single toggle. |
 | `test/ops-log.test.mjs` | Field whitelist, per-session isolation, rotation, torn lines, `host:port` projection. |
@@ -116,9 +116,9 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
   summaries fall back to `kind/channel` (template :151/:213).
 - `summaryEnabled`/`summaryMaxItems`/`summaryMaxTitleChars`/`summaryMaxTotalChars`
   resolve from row config, `INBOX_SUMMARY_*`, the local file, or defaults
-  (config :229–:270). `summaryMaxTotalChars` defaults to 1200 so a 512-char
-  complete row can fit; profile-declared `completeKinds` map to compact
-  view-ack rows without changing Inbox core.
+  (config :229–:270). `summaryMaxTotalChars` defaults to 1200. View-ack rows are
+  generically compact (`source/kind/summary`), keep the opaque kind, and mark a
+  shortened summary with `truncated:true`; no profile kind mapping is needed.
 - `/inbox status` and the adapter status tool print the config, the last outcome
   (`ok/empty/degraded/forbidden/disabled`), `shown/remaining`, timestamp, code,
   and message; item summary text is never stored or logged (adapter :1162/:1221,
@@ -305,3 +305,28 @@ repository.
   149 tests, 146 pass, 3 live-skipped, 0 fail.
 - **Not verified**: the running DSH host still holds the old module until a
   reload/restart. Live `programMcp` transition is `NOT_RUN`.
+
+
+## v1.10 generic compact view-ack and profile retirement (2026-10-31)
+
+- **Source**: D-033 and the live Bot feedback that the program MCP tool
+  descriptions already encode read/send/ack, while the wake only needs
+  `source`, `available`, and opaque `kind`.
+- **Generic view-ack shape**: view-ack rows now use
+  `{"source":"...","kind":"...","summary":"..."}` without `itemId/channel`.
+  The opaque `kind` is retained so the program MCP can interpret
+  `digest_complete`; the adapter does not.
+- **Bounded summary**: compact summaries are capped at 512 characters. If the
+  wake block budget forces a shorter preview, the row carries
+  `"truncated":true`; the program must not treat a truncated summary as
+  complete.
+- **No business mirror**: profiles can customize only generic view-ack bodies.
+  `businessTools`, `programMcpWarning`, `completeKinds`, and
+  `compactViewAckItems` were removed from the profile contract.
+- **Readiness**: claim mode keeps the generic `inbox_claim/list/view` probe;
+  view-ack readiness is always `unknown`, and wake text no longer carries a
+  missing-program warning.
+- **Fallback**: an unresolved `wakeProfile` falls back to `generic` instead of
+  dropping the wake.
+- **Verification**: `npm test` PASS, **150 tests / 147 pass / 3 live-skipped /
+  0 fail**. Real DSH reload and real Bot wake remain `NOT_RUN`.

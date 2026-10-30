@@ -304,7 +304,9 @@ export async function createTestAdapter({
       followup: (agent, message) => agent.followup(message),
       now: host.now,
       wakeProfile: () => host.wakeProfile,
-      hasBusinessTools: () => host.businessTools !== false,
+      hasBusinessTools: (_agent, wakeMode) => wakeMode === 'view-ack'
+        ? undefined
+        : host.businessTools !== false,
     },
     tokenSource: { kind: 'inline' },
   })
@@ -388,7 +390,9 @@ export async function createTestManager({ host, overrides = {}, stateFile, state
       followup: (agent, message) => agent.followup(message),
       now: host.now,
       wakeProfile: () => host.wakeProfile,
-      hasBusinessTools: () => host.businessTools !== false,
+      hasBusinessTools: (_agent, wakeMode) => wakeMode === 'view-ack'
+        ? undefined
+        : host.businessTools !== false,
     },
     opsLog: new OpsLog({ file: join(dirname(file), 'ops.jsonl'), logger }),
   })

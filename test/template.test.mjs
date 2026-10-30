@@ -10,7 +10,6 @@ import {
   wakeKey,
   wakeMessageId,
 } from '../lib/template.js'
-import { QQ_PROFILE } from './helpers/qq-profile.mjs'
 
 test('wake template is the contract text, field for field', () => {
   const text = renderWakeTemplate({
@@ -90,7 +89,7 @@ test('wake message is an immutable user message with an adapter-owned source', (
 })
 
 
-test('view-ack wake uses compact complete items and no claim/list surface', () => {
+test('generic view-ack uses compact source/kind/summary without a program profile', () => {
   const completeText = '字'.repeat(512)
   const text = renderWakeTemplate({
     inboxId: 'iibot-bot-sim',
@@ -112,27 +111,24 @@ test('view-ack wake uses compact complete items and no claim/list surface', () =
       maxTitleChars: 80,
       maxTotalChars: 1200,
     },
-    programMcpMissing: true,
     wakeMode: 'view-ack',
-    profile: QQ_PROFILE,
   })
   assert.ok(!text.includes('inbox_claim'))
   assert.ok(!text.includes('inbox_list'))
   assert.ok(!text.includes('inbox_view'))
-  assert.match(text, /complete=true/)
-  assert.match(text, /complete=true：正文已内联，不调用 read；处理后 ack\(source\)。/)
-  assert.match(text, /more=true/)
+  assert.ok(!text.includes('qq_conversation'))
+  assert.match(text, /available=1/)
+  assert.match(text, /available=0 时结束本回合，不要轮询/)
   assert.match(text, /处理时以通知板为准/)
   assert.ok(!text.includes('claim 时以通知板为准'))
   assert.ok(!text.includes('itemId'))
-  assert.ok(!text.includes('"kind"'))
   const summaryLine = text.split('\n').find((line) => line.startsWith('- {"source"'))
   assert.ok(summaryLine)
   const parsed = JSON.parse(summaryLine.slice(2))
   assert.deepEqual(parsed, {
     source: 'qq_group/bot-1/955432692',
+    kind: 'digest_complete',
     summary: completeText,
-    complete: true,
   })
   assert.equal([...parsed.summary].length, 512)
   assert.equal(VIEW_ACK_SUMMARY_BODY.includes('inbox_claim'), false)
@@ -143,7 +139,7 @@ test('view-ack wake uses compact complete items and no claim/list surface', () =
   assert.equal(VIEW_ACK_BODY.includes('inbox_view'), false)
 })
 
-test('a complete summary over 512 chars degrades to an incomplete compact item', () => {
+test('a summary over 512 chars is truncated and marked for safe read fallback', () => {
   const tooLong = '字'.repeat(513)
   const text = renderWakeTemplate({
     inboxId: 'iibot-bot-sim',
@@ -166,17 +162,48 @@ test('a complete summary over 512 chars degrades to an incomplete compact item',
       maxTotalChars: 1200,
     },
     wakeMode: 'view-ack',
-    profile: QQ_PROFILE,
   })
   const summaryLine = text.split('\n').find((line) => line.startsWith('- {"source"'))
   assert.ok(summaryLine)
   const parsed = JSON.parse(summaryLine.slice(2))
+  assert.equal(parsed.kind, 'digest_complete')
+  assert.equal([...parsed.summary].length, 512)
+  assert.equal(parsed.truncated, true)
   assert.equal(Object.hasOwn(parsed, 'complete'), false)
-  assert.ok([...parsed.summary].length <= 80)
-  assert.ok(!summaryLine.includes('"complete"'))
 })
 
-test('claim mode keeps itemId/channel/kind even for a complete profile', () => {
+test('an over-budget view-ack row degrades to a short summary with truncated=true', () => {
+  const text = renderWakeTemplate({
+    inboxId: 'iibot-bot-sim',
+    revision: 9,
+    available: 3,
+    channels: ['qq'],
+    summary: {
+      items: [
+        { itemId: 'itm_1', channel: 'qq', kind: 'digest_complete',
+          source: 'qq_group/bot-1/955432692', summary: '字'.repeat(512) },
+        { itemId: 'itm_2', channel: 'qq', kind: 'digest',
+          source: 'qq_group/bot-1/955432693', summary: '字'.repeat(512) },
+        { itemId: 'itm_3', channel: 'qq', kind: 'digest',
+          source: 'qq_group/bot-1/955432694', summary: '字'.repeat(512) },
+      ],
+      remaining: 0,
+      maxItems: 3,
+      maxTitleChars: 80,
+      maxTotalChars: 320,
+    },
+    wakeMode: 'view-ack',
+  })
+  const summaryLines = text.split('\n').filter((line) => line.startsWith('- {"source"'))
+  assert.ok(summaryLines.length >= 1, text)
+  const first = JSON.parse(summaryLines[0].slice(2))
+  assert.equal(first.kind, 'digest_complete')
+  assert.equal(first.truncated, true)
+  assert.ok([...first.summary].length <= 80)
+  assert.match(text, /还有 \d+ 条未展示/)
+})
+
+test('claim mode keeps itemId/channel/kind in the legacy row shape', () => {
   const text = renderWakeTemplate({
     inboxId: 'iibot-bot-sim',
     revision: 9,
@@ -198,7 +225,6 @@ test('claim mode keeps itemId/channel/kind even for a complete profile', () => {
       maxTotalChars: 1200,
     },
     wakeMode: 'claim',
-    profile: QQ_PROFILE,
   })
   assert.match(text, /"itemId":"itm_1"/)
   assert.match(text, /"channel":"qq"/)

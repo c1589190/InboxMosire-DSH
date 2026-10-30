@@ -66,7 +66,7 @@ test('normalizeItems omits empty source, caps long source, and stays backward co
   assert.equal(result.items[3].source.length, 512)
 })
 
-test('view-ack wake renders each source as data and uses qq conversation read/ack', () => {
+test('view-ack renders compact source rows without a program workflow mirror', () => {
   const text = renderWakeTemplate({
     inboxId: 'iibot-bot-sim',
     revision: 7,
@@ -94,17 +94,21 @@ test('view-ack wake renders each source as data and uses qq conversation read/ac
       maxTotalChars: 600,
     },
     wakeMode: 'view-ack',
-    profile: QQ_PROFILE,
   })
   const summaryLines = text.split('\n').filter((line) => line.startsWith('- {'))
   assert.equal(summaryLines.length, 2)
-  assert.equal(JSON.parse(summaryLines[0].slice(2)).source, 'qq_group/bot-1/955432692')
-  assert.ok(!Object.hasOwn(JSON.parse(summaryLines[0].slice(2)), 'itemId'))
+  const first = JSON.parse(summaryLines[0].slice(2))
+  assert.deepEqual(first, {
+    source: 'qq_group/bot-1/955432692',
+    kind: 'digest',
+    summary: '群聊更新',
+  })
+  assert.ok(!Object.hasOwn(first, 'itemId'))
+  assert.ok(!Object.hasOwn(first, 'complete'))
   assert.match(summaryLines[1], /"itemId":"itm_2"/)
-  assert.match(text, /complete 缺失/)
-  assert.match(text, /read\(source\)/)
-  assert.match(text, /ack\(source\)/)
-  assert.match(text, /more=true/)
+  assert.match(text, /available=2/)
+  assert.match(text, /available=0 时结束本回合，不要轮询/)
+  assert.ok(!text.includes('qq_conversation'))
   assert.ok(!text.includes('inbox_list'))
   assert.ok(!text.includes('inbox_view'))
   assert.ok(!text.includes('inbox_claim'))
@@ -132,9 +136,7 @@ test('view-ack source injection stays inside the escaped summary field', () => {
       maxTitleChars: 80,
       maxTotalChars: 600,
     },
-    programMcpMissing: true,
     wakeMode: 'view-ack',
-    profile: QQ_PROFILE,
   })
   const summaryLine = text.split('\n').find((line) => line.startsWith('- {"source"'))
   assert.ok(summaryLine)
@@ -144,21 +146,18 @@ test('view-ack source injection stays inside the escaped summary field', () => {
   )
   assert.ok(!summaryLine.includes('\n'))
   assert.ok(!text.split('\n').some((line) => line.startsWith('[SYSTEM]')))
-  assert.match(text, /未检测到可处理 source 的程序 MCP 业务工具/)
-  assert.match(text, /qq_conversation_read\/ack/)
-  assert.ok(!text.includes('inbox_list/inbox_view'))
+  assert.ok(!text.includes('未检测到'))
+  assert.ok(!text.includes('qq_conversation'))
+  assert.ok(!text.includes('inbox_claim'))
 })
 
-test('program-MCP detection is wake-mode aware and accepts qq tools with prefixes', () => {
-  assert.equal(isBusinessToolName('qq_conversation_read', undefined, QQ_PROFILE), true)
-  assert.equal(isBusinessToolName('mcp__iibot__qq_conversation_ack', undefined, QQ_PROFILE), true)
-  assert.equal(isBusinessToolName('mcp__iibot__qq_conversation_read', 'view-ack', QQ_PROFILE), true)
-  assert.equal(isBusinessToolName('qq_conversation_ack', 'view-ack', QQ_PROFILE), true)
+test('program-MCP detection is claim-only and does not mirror view-ack tools', () => {
   assert.equal(isBusinessToolName('inbox_claim', 'claim'), true)
   assert.equal(isBusinessToolName('mcp__app-a-inbox__inbox_list', 'claim'), true)
+  assert.equal(isBusinessToolName('inbox_claim'), true)
   assert.equal(isBusinessToolName('inbox_claim', 'view-ack'), false)
-  assert.equal(isBusinessToolName('qq_conversation_read', 'claim', QQ_PROFILE), false)
-  assert.equal(isBusinessToolName('bot_reply', undefined, QQ_PROFILE), false)
+  assert.equal(isBusinessToolName('qq_conversation_read', 'claim'), false)
+  assert.equal(isBusinessToolName('qq_conversation_read', 'view-ack'), false)
 
   const viewAckAgent = {
     ctx: {
@@ -170,9 +169,7 @@ test('program-MCP detection is wake-mode aware and accepts qq tools with prefixe
       },
     },
   }
-  assert.equal(hasBusinessTools(viewAckAgent, 'view-ack', QQ_PROFILE), true)
-  assert.equal(hasBusinessTools(viewAckAgent, 'claim'), false)
-  assert.equal(hasBusinessTools(viewAckAgent, undefined, QQ_PROFILE), true, 'no mode uses the union')
+  assert.equal(hasBusinessTools(viewAckAgent, 'view-ack'), undefined)
 
   const claimAgent = {
     ctx: {
@@ -185,22 +182,22 @@ test('program-MCP detection is wake-mode aware and accepts qq tools with prefixe
     },
   }
   assert.equal(hasBusinessTools(claimAgent, 'claim'), true)
-  assert.equal(hasBusinessTools(claimAgent, 'view-ack', QQ_PROFILE), false)
+  assert.equal(hasBusinessTools(claimAgent, 'view-ack'), undefined)
 })
 
-test('program-MCP detection queries the live agent scope', () => {
+test('program-MCP detection queries the live agent scope in claim mode', () => {
   const agent = {
     ctx: {
       tools: {
         // The DSH registry returns the global view when scope is omitted.
         // Only the agent-scoped view contains the session's MCP tools.
         schemas: (scope) => scope === agent
-          ? [{ name: 'mcp__iibot__qq_conversation_read' }]
+          ? [{ name: 'mcp__iibot__inbox_view' }]
           : [],
       },
     },
   }
-  assert.equal(hasBusinessTools(agent, 'view-ack', QQ_PROFILE), true)
+  assert.equal(hasBusinessTools(agent, 'claim'), true)
 })
 
 test('adapter view-ack wake carries a producer source through items and template', async (t) => {
@@ -222,10 +219,12 @@ test('adapter view-ack wake carries a producer source through items and template
   })
   await waitFor(() => host.followups.length === 1, { label: 'source wake' })
   const text = host.followups[0].message.content[0].text
+  assert.match(text, /available=1/)
   assert.match(text, /"source":"qq_group\/bot-1\/955432692"/)
-  assert.match(text, /read\(source\)/)
-  assert.match(text, /ack\(source\)/)
-  assert.match(text, /more=true/)
+  assert.match(text, /"kind":"digest"/)
+  assert.ok(!text.includes('"itemId"'))
+  assert.ok(!text.includes('qq_conversation'))
   assert.ok(!text.includes('inbox_list'))
   assert.ok(!text.includes('inbox_view'))
+  assert.ok(!text.includes('inbox_claim'))
 })
