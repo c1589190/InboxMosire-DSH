@@ -5,6 +5,12 @@ Run on 2026-10-26 21:26–21:30 (Asia/Shanghai) against InboxMosire backend
 because the old `inboxd-live.service` unit no longer exists; it used the existing
 live data directory and was stopped after the run.
 
+> **D-036 update (2026-11-01)**: The "`content` never in wake/state/logs" row
+> below records the 2026-10-26 baseline. Current default `wakeContent=bounded`
+> reads only shown-item detail `content` and renders it in a separate bounded
+> untrusted block; `payload`/`payloadRef` and claim tokens remain unread. See
+> `README.md` and the D-036 spec in `iiBotMosire`.
+
 | Item | Value |
 |---|---|
 | Backend | `bd28ffa`, `inbox-server-0.1.0-SNAPSHOT-all.jar` |

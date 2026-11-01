@@ -39,8 +39,10 @@ The adapter only:
 6. persists each binding's cursor/revision/wake/summary diagnostics;
 7. stops on archive/dispose and maintains advisory occupancy.
 
-It never claims, completes, pushes, reads `content`/`payload`/`payloadRef`, or
-speaks MCP. The
+It never claims, completes, pushes, or speaks MCP. When `wakeContent=bounded`,
+it reads only the detail `content` of items already shown in the summary; it
+never reads `payload`/`payloadRef`, and it never interprets content as
+instructions. The
 target session uses its **program-owned MCP** (Mode A) for
 its own business tool set (claim-style programs use
 `inbox_list`/`inbox_claim`/`inbox_complete`; view-ack programs name theirs in a
