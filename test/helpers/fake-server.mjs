@@ -33,6 +33,8 @@ export async function startFakeInbox({
   const occupancyCalls = []
   const itemsCalls = []
   const availableItems = []
+  const contents = new Map()
+  const detailCalls = []
   const claimedItems = []
   const itemsModes = new Set()
   let occupant = null
@@ -168,7 +170,7 @@ export async function startFakeInbox({
       if (input.summaryOnly !== true) item.title = input.aliasTitle ?? summary
     }
     if (input.source !== undefined) item.source = input.source
-    void input.content
+    if (input.content !== undefined) contents.set(itemId, String(input.content))
     void input.payload
     availableItems.push(item)
     state.revision += 1
@@ -325,7 +327,7 @@ export async function startFakeInbox({
       return
     }
 
-    const match = url.pathname.match(/^\/v1\/inboxes\/([^/]+)\/(status|events|occupancy|items)$/)
+    const match = url.pathname.match(/^\/v1\/inboxes\/([^/]+)\/(status|events|occupancy|items)(?:\/([^/]+))?$/)
     if (!match || decodeURIComponent(match[1]) !== inbox) {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'inbox not found' } }))
@@ -364,6 +366,33 @@ export async function startFakeInbox({
       }
       res.writeHead(405, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { code: 'METHOD_NOT_ALLOWED', message: 'occupancy' } }))
+      return
+    }
+
+    if (match[2] === 'items' && match[3]) {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'METHOD_NOT_ALLOWED', message: 'item' } }))
+        return
+      }
+      const itemId = decodeURIComponent(match[3])
+      const item = availableItems.find((candidate) => candidate.itemId === itemId)
+      detailCalls.push({ itemId })
+      if (!item) {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'item not found' } }))
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        ...item,
+        inboxId: inbox,
+        content: contents.get(itemId) ?? '',
+        contentRef: '',
+        status: 'AVAILABLE',
+        revision: state.revision,
+        updatedAt: new Date().toISOString(),
+      }))
       return
     }
 
@@ -479,6 +508,7 @@ export async function startFakeInbox({
     connections,
     occupancyCalls,
     itemsCalls,
+    detailCalls,
     push,
     updateSummary,
     claim,

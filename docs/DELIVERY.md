@@ -1,5 +1,11 @@
 # Delivery report — InboxMosire → DSH v2 adapter with summary/content wake and WebUI panel
 
+> **D-036 update（2026-11-01）**：本文的“never reads content/payload/payloadRef”是
+> 2026-10-26 历史边界；当前默认 `wakeContent=bounded`，只读取摘要中展示 item 的
+> detail content，并放入独立不可信块。`payload`/`payloadRef`/claim token 仍不读取。
+> 当前行为以 `README.md` 和 `iiBotMosire/docs/superpowers/specs/2026-11-01-wake-content-and-media-inspection.md`
+> 为准。
+
 Scope: `/home/cna/InboxMosire-DSH` only. The backend, its HTTP/SSE/MCP contract,
 and the program side were not modified. No backend logic was copied; the adapter
 never claims, completes, pushes, reads content/payload/payloadRef, or speaks MCP.
