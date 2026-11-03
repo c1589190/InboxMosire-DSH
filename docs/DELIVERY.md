@@ -110,8 +110,12 @@ tokenRef -> GET /status -> GET /items?limit=summaryMaxItems
   `title` is the fallback, and `content`/`payload`/`payloadRef` never enter the
   process (client :148/:285).
 - `InboxAdapter.readSummary` runs after the revision dedupe/backoff gates, so an
-  empty board, an active turn, an already-woken revision, or a backoff window
-  makes **no** `/items` request (adapter :633, :711).
+  empty board, an active turn, an already-woken revision inside its repeat
+  interval, or a backoff window makes **no** `/items` request (adapter :633,
+  :711). A revision that was woken but never acked is *not* deduped forever: the
+  repeat fires once `reackIntervalMs` elapsed, with `:reinjection:<k>` in the
+  key and a `重复提醒 #k` line in the text (adapter `reackDeadline`/`reackInterval`,
+  template `wakeKey`).
 - A summary failure is recorded in `binding.summary` and the wake continues with
   the no-summary body. 5xx/timeout/network/protocol set `state=degraded` and are
   retried only on the next revision; 401/403 set `SUMMARY_FORBIDDEN`, persist,

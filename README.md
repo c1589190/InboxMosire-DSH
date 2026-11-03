@@ -98,6 +98,13 @@ at bind time; an unreadable or relative reference fails the bind closed and
 leaves the previous binding intact. The raw token is used only in the
 `Authorization` header and is redacted from every log line.
 
+A descriptor may also declare `"wakeMode": "claim" | "view-ack"`: the program
+that writes the descriptor knows whether it can claim. The resolution order is
+explicit bind option > descriptor > the binding's existing mode > `claim`. When
+the mode stays `claim` but the bound program's MCP visibly has no claim tools
+(`health.programMcp.state = "missing"`), the adapter logs an actionable warning
+instead of silently sending instructions the program cannot execute.
+
 ## Operation log
 
 Every binding lifecycle event is appended to a per-session JSONL log next to
@@ -141,7 +148,43 @@ Precedence: plugin-row `config` > `INBOX_*` environment > `$DSH_HOME/inbox-mosir
 | `wakeContentMaxChars` | `INBOX_WAKE_CONTENT_MAX_CHARS` | `4000` (200–8000) per item |
 | `wakeContentTotalChars` | `INBOX_WAKE_CONTENT_TOTAL_CHARS` | `12000` (500–20000) per wake |
 | `wakeProfile` | `INBOX_WAKE_PROFILE` | `generic` (named profile from `inboxWakeProfiles`) |
+| `reackIntervalMs` | `INBOX_WAKE_REACK_MS` | `30000` (1000–3600000): repeat cadence while items stay un-acked |
 | `inboxId` / `tokenFile` / `sessionId` | legacy `INBOX_*` | used only for v1 state migration |
+
+## Un-acked items keep being re-injected
+
+A wake is only useful if the Agent actually processes the items, so a wake is
+**not** a one-shot edge event. As long as the board still reports
+`available > 0` for the bound session, the adapter repeats the wake every
+`reackIntervalMs`:
+
+- the first wake of a revision uses the plain key
+  `inbox:<id>:revision:<n>:session:<ref>`;
+- every repeat adds `:reinjection:<k>` and a `重复提醒 #k` line to the text, so
+  a repeat is a distinct, visible message rather than a silently dropped
+  duplicate;
+- there is no attempt limit and no expiry: items that are never acked or
+  archived keep ringing until the session acked them or the inbox process goes
+  away;
+- an ack that drains the backlog (`available` back to 0), a new revision, a
+  re-bind, or `/inbox off` clears the repeat ledger;
+- the no-progress backoff window does not suppress repeats — the cadence is
+  fixed by `reackIntervalMs`, not by the exponential backoff.
+
+## Startup retry
+
+The first thing a binding does is read `/status`, before the SSE loop exists. If
+that read fails because the inbox daemon is not up yet — the normal case when
+DSH starts before `iibot` — the binding retries on its own, with the same
+backoff as the SSE reconnect loop (`reconnectBaseMs` doubling up to
+`reconnectMaxMs`, plus jitter, reset to base after the first success):
+
+- each retry increments `health.reconnects` and logs `启动失败，安排重连` with
+  `attempt`/`delayMs`, so a stuck binding is visible without `/inbox status`;
+- fatal failures (401/403 auth, unknown inbox) do **not** retry: they record
+  `health.configError` and wait for `/inbox retry`;
+- `stop()`, `/inbox off`, a re-bind, or `/inbox retry` cancels a pending retry;
+- nothing is sent, claimed, or acked while retrying — only `/status` is read.
 
 ## Wake profiles
 
@@ -180,6 +223,7 @@ or readiness-warning fields.
       "apiBaseUrl": "http://127.0.0.1:18765",
       "adapterTokenRef": "file:/…/dsh-session-app-a-wake.token",
       "channels": [],
+      "wakeMode": "view-ack",
       "lastEventId": 128,
       "lastObservedRevision": 42,
       "lastWokenRevision": 40,

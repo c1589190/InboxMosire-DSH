@@ -68,6 +68,17 @@ test('inbox, channel, and state-path validation fail closed', () => {
   assert.ok(bad.errors.some((message) => message.includes('stateFile')))
 })
 
+test('reackIntervalMs resolves with a lower bound and a 30s default', () => {
+  assert.equal(resolveConfig({}, {}, {}).value.reackIntervalMs, 30000)
+  assert.equal(resolveConfig({ reackIntervalMs: 5000 }, {}, {}).value.reackIntervalMs, 5000)
+  assert.equal(resolveConfig({ reackIntervalMs: 10 }, {}, {}).value.reackIntervalMs, 1000)
+  assert.equal(resolveConfig({ reackIntervalMs: 9e9 }, {}, {}).value.reackIntervalMs, 3600000)
+  assert.equal(
+    resolveConfig({}, { INBOX_WAKE_REACK_MS: '7000' }, {}).value.reackIntervalMs,
+    7000,
+  )
+})
+
 test('bounded numeric and boolean settings are clamped and parsed', () => {
   const high = resolveConfig({ debounceMs: 999999, heartbeatTimeoutSeconds: 1 }, {}, {})
   assert.equal(high.value.debounceMs, 5000)

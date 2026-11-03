@@ -476,3 +476,22 @@ test('the plugin entry wires a v2 manager and the /inbox command', async (t) => 
 
   await host.disposeAll()
 })
+
+test('claim mode with an invisible program MCP logs an actionable warning', async (t) => {
+  const server = await startFakeInbox()
+  t.after(() => server.close())
+  const host = createFakeHost()
+  host.businessTools = false
+  host.createAgent('session-test')
+  const { adapter } = await createTestAdapter({ server, host })
+  t.after(() => adapter.stop())
+  await adapter.start()
+  await waitFor(() => server.connectionCount === 1, { label: 'SSE connection' })
+  server.push({ channel: 'ticket', summary: '未读' })
+  await waitFor(() => host.followups.length === 1, { label: 'wake' })
+  assert.equal(adapter.snapshot().health.programMcp.state, 'missing')
+  const warned = host.logs.filter((row) => row.level === 'warn'
+    && row.message.includes('wakeMode=claim'))
+  assert.ok(warned.length >= 1, 'the claim/view-ack mismatch is surfaced')
+  assert.match(warned[0].message, /view-ack/)
+})

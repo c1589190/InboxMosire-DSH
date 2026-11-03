@@ -525,3 +525,34 @@ test('a disposed session leaves a host stop row in its own log', async (t) => {
   assert.equal(stop.reason, 'session-disposed')
   assert.ok(!manager.readOps('session-b').some((entry) => entry.action === 'stop'))
 })
+
+test('a descriptor can declare wakeMode and an explicit bind option wins', async (t) => {
+  const server = await startFakeInbox({ inbox: 'app-wm' })
+  t.after(() => server.close())
+  const host = createFakeHost()
+  host.createAgent('session-wm')
+  const dir = await tempDir(t)
+  const created = await createTestManager({ host })
+  t.after(() => created.manager.stop())
+  await created.manager.start()
+
+  const declared = { ...(await writeBindingDescriptor(dir, server)), wakeMode: 'view-ack' }
+  const first = await created.manager.bind({ sessionId: 'session-wm', descriptor: declared })
+  assert.equal(first.ok, true, first.message)
+  assert.equal(created.manager.state.bindings['session-wm'].wakeMode, 'view-ack')
+
+  const overridden = await created.manager.bind({
+    sessionId: 'session-wm',
+    descriptor: declared,
+    wakeMode: 'claim',
+  })
+  assert.equal(overridden.ok, true, overridden.message)
+  assert.equal(created.manager.state.bindings['session-wm'].wakeMode, 'claim')
+
+  const broken = await created.manager.bind({
+    sessionId: 'session-wm',
+    descriptor: { ...declared, wakeMode: 'claim-ish' },
+  })
+  assert.equal(broken.ok, false)
+  assert.match(broken.message, /INVALID_WAKE_MODE/)
+})
